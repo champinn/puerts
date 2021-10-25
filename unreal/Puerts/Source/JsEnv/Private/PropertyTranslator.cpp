@@ -11,6 +11,7 @@
 #include "StructWrapper.h"
 #include "Engine/UserDefinedStruct.h"
 #include "ArrayBuffer.h"
+#include "ContainerWrapper.h"
 #include "JsObject.h"
 
 namespace puerts
@@ -35,7 +36,7 @@ void FPropertyTranslator::Getter(v8::Isolate* Isolate, v8::Local<v8::Context>& C
     
     if (OwnerIsClass)
     {
-        UObject* Object = FV8Utils::GetUObject(Info.This());
+        UObject* Object = FV8Utils::GetUObject(Info.Holder());
         if (!Object)
         {
             FV8Utils::ThrowException(Isolate, "access a null object");
@@ -50,7 +51,7 @@ void FPropertyTranslator::Getter(v8::Isolate* Isolate, v8::Local<v8::Context>& C
     }
     else
     {
-        Info.GetReturnValue().Set(UEToJsInContainer(Isolate, Context, FV8Utils::GetPointer(Info.This()), true));
+        Info.GetReturnValue().Set(UEToJsInContainer(Isolate, Context, FV8Utils::GetPointer(Info.Holder()), true));
     }
 }
 
@@ -73,7 +74,7 @@ void FPropertyTranslator::Setter(v8::Isolate* Isolate, v8::Local<v8::Context>& C
     
     if (OwnerIsClass)
     {
-        UObject* Object = FV8Utils::GetUObject(Info.This());
+        UObject* Object = FV8Utils::GetUObject(Info.Holder());
         if (!Object)
         {
             FV8Utils::ThrowException(Isolate, "access a null object");
@@ -88,7 +89,7 @@ void FPropertyTranslator::Setter(v8::Isolate* Isolate, v8::Local<v8::Context>& C
     }
     else
     {
-        JsToUEInContainer(Isolate, Context, Value, FV8Utils::GetPointer(Info.This()), true);
+        JsToUEInContainer(Isolate, Context, Value, FV8Utils::GetPointer(Info.Holder()), true);
     }
 }
 
@@ -107,7 +108,7 @@ void FPropertyTranslator::DelegateGetter(const v8::FunctionCallbackInfo<v8::Valu
         return;
     }
     
-    auto Object = FV8Utils::GetUObject(Info.This());
+    auto Object = FV8Utils::GetUObject(Info.Holder());
     if (!Object)
     {
         FV8Utils::ThrowException(Isolate, "access a null object");
@@ -574,7 +575,7 @@ public:
         }
         else
         {
-            ScriptArray = new FScriptArray;
+            ScriptArray = reinterpret_cast<FScriptArray*>(new FScriptArrayEx(ArrayProperty->Inner));
             ArrayProperty->CopyCompleteValue(ScriptArray, ValuePtr);
         }
         return FV8Utils::IsolateData<IObjectMapper>(Isolate)->FindOrAddContainer(Isolate, Context, ArrayProperty->Inner, ScriptArray, ByPointer);
@@ -610,7 +611,7 @@ public:
         }
         else
         {
-            ScriptSet = new FScriptSet;
+            ScriptSet = reinterpret_cast<FScriptSet*>(new FScriptSetEx(SetProperty->ElementProp));
             SetProperty->CopyCompleteValue(ScriptSet, ValuePtr);
         }
         return FV8Utils::IsolateData<IObjectMapper>(Isolate)->FindOrAddContainer(Isolate, Context, SetProperty->ElementProp, ScriptSet, ByPointer);
@@ -646,7 +647,7 @@ public:
         }
         else
         {
-            ScriptMap = new FScriptMap;
+            ScriptMap = reinterpret_cast<FScriptMap*>(new FScriptMapEx(MapProperty->KeyProp, MapProperty->ValueProp));
             MapProperty->CopyCompleteValue(ScriptMap, ValuePtr);
         }
         return FV8Utils::IsolateData<IObjectMapper>(Isolate)->FindOrAddContainer(Isolate, Context, MapProperty->KeyProp, MapProperty->ValueProp, ScriptMap, ByPointer);

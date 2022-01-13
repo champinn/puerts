@@ -63,6 +63,8 @@
 
 #endif
 
+typedef char* (*CSharpModuleResolveCallback)(const char* identifer, int32_t jsEnvIdx);
+
 typedef void(*CSharpFunctionCallback)(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, void* Self, int ParamLen, int64_t UserData);
 
 typedef void* (*CSharpConstructorCallback)(v8::Isolate* Isolate, const v8::FunctionCallbackInfo<v8::Value>& Info, int ParamLen, int64_t UserData);
@@ -101,9 +103,9 @@ v8::Local<v8::ArrayBuffer> NewArrayBuffer(v8::Isolate* Isolate, void *Ptr, size_
 
 enum JSEngineBackend
 {
-    Default     = 0,
+    V8          = 0,
     Node        = 1,
-    External    = 2,
+    QuickJS     = 2,
 };
 
 class JSEngine
@@ -112,12 +114,14 @@ private:
     void JSEngineWithNode();
     void JSEngineWithoutNode(void* external_quickjs_runtime, void* external_quickjs_context);
 public:
-    PUERTS_EXPORT_FOR_UT JSEngine(bool withNode, void* external_quickjs_runtime, void* external_quickjs_context);
+    PUERTS_EXPORT_FOR_UT JSEngine(void* external_quickjs_runtime, void* external_quickjs_context);
 
     PUERTS_EXPORT_FOR_UT ~JSEngine();
 
     PUERTS_EXPORT_FOR_UT void SetGlobalFunction(const char *Name, CSharpFunctionCallback Callback, int64_t Data);
 
+    PUERTS_EXPORT_FOR_UT bool ExecuteModule(const char* Path, const char* Exportee);
+    
     PUERTS_EXPORT_FOR_UT bool Eval(const char *Code, const char* Path);
 
     PUERTS_EXPORT_FOR_UT int RegisterClass(const char *FullName, int BaseTypeId, CSharpConstructorCallback Constructor, CSharpDestructorCallback Destructor, int64_t Data, int Size);
@@ -169,11 +173,16 @@ public:
         return FV8Utils::IsolateData<JSEngine>(Isolate);
     }
 
+    int32_t Idx;
+    
+    CSharpModuleResolveCallback ModuleResolver;
+#if defined(WITH_QUICKJS)
+    std::map<std::string, JSModuleDef*> ModuleCacheMap;
+#else
+    std::map<std::string, v8::UniquePersistent<v8::Module>> ModuleCacheMap;
+#endif
 private:
-
 #if defined(WITH_NODEJS)
-    bool withNode;
-
     uv_loop_t* NodeUVLoop;
 
     std::unique_ptr<node::ArrayBufferAllocator> NodeArrayBufferAllocator;

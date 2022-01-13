@@ -41,7 +41,9 @@ public class JsEnv : ModuleRules
             }
         }
 
-        if (UseNodejs && Target.bBuildEditor)
+        if (UseNodejs && (Target.Platform == UnrealTargetPlatform.Win64 
+                          || Target.Platform == UnrealTargetPlatform.Mac 
+                          || Target.Platform == UnrealTargetPlatform.Linux))
         {
             ThirdPartyNodejs(Target);
         }
@@ -356,10 +358,7 @@ public class JsEnv : ModuleRules
             string V8LibraryPath = Path.Combine(LibraryPath, "Win64");
             PublicAdditionalLibraries.Add(Path.Combine(V8LibraryPath, "libnode.lib"));
 
-            AddRuntimeDependencies(new string[]
-            {
-                "libnode.dll",
-            }, V8LibraryPath, false);
+            RuntimeDependencies.Add("$(TargetOutputDir)/libnode.dll", Path.Combine(V8LibraryPath, "libnode.dll"));
         }
         else if (Target.Platform == UnrealTargetPlatform.Mac)
         {

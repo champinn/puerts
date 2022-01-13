@@ -97,9 +97,30 @@ namespace Puerts.Editor
 
             public static bool IsStatic(PropertyInfo propertyInfo)
             {
-                var getMethod = propertyInfo.GetMethod;
-                var setMethod = propertyInfo.SetMethod;
+                var getMethod = propertyInfo.GetGetMethod();
+                var setMethod = propertyInfo.GetSetMethod();
                 return getMethod == null ? setMethod.IsStatic : getMethod.IsStatic;
+            }
+            public enum BindingMode {
+                FastBinding = 0,
+                SlowBinding = 1,
+                LazyBinding = 2,
+                DontBinding = 3,
+            }
+
+            internal static BindingMode getBindingMode(MemberInfo mbi) 
+            {
+                if (filters != null && filters.Count > 0)
+                {
+                    foreach (var filter in filters)
+                    {
+                        if ((bool)filter.Invoke(null, new object[] { mbi }))
+                        {
+                            return BindingMode.LazyBinding;
+                        }
+                    }
+                }
+                return BindingMode.FastBinding;
             }
 
             public static bool isFiltered(MemberInfo mbi, bool notFiltEII = false)
@@ -135,8 +156,8 @@ namespace Puerts.Editor
                         return true;
                     }
                     if (!(
-                        (pi.GetMethod != null && pi.GetMethod.IsPublic) ||
-                        (pi.SetMethod != null && pi.SetMethod.IsPublic)
+                        (pi.GetGetMethod() != null && pi.GetGetMethod().IsPublic) ||
+                        (pi.GetSetMethod() != null && pi.GetSetMethod().IsPublic)
                     ))
                     {
                         if (notFiltEII)
@@ -160,17 +181,6 @@ namespace Puerts.Editor
                             return !mi.Name.Contains(".");
                         }
                         return true;
-                    }
-                }
-
-                if (filters != null && filters.Count > 0)
-                {
-                    foreach (var filter in filters)
-                    {
-                        if ((bool)filter.Invoke(null, new object[] { mbi }))
-                        {
-                            return true;
-                        }
                     }
                 }
 
@@ -262,7 +272,7 @@ namespace Puerts.Editor
             }
 
             // #lizard forgives
-            public static string GetTsTypeName(Type type, bool isParams = false)
+            public static string GetTsTypeName(Type type, bool isParams = false, ParameterInfo paramInfo = null)
             {
                 if (type == typeof(int))
                     return "number";
@@ -300,6 +310,8 @@ namespace Puerts.Editor
                     return "any";
                 else if (type == typeof(Delegate) || type == typeof(Puerts.GenericDelegate))
                     return "Function";
+                else if (paramInfo != null && paramInfo.IsIn)
+                    return GetTsTypeName(type.GetElementType());
                 else if (type.IsByRef)
                     return "$Ref<" + GetTsTypeName(type.GetElementType()) + ">";
                 else if (type.IsArray)
@@ -347,9 +359,10 @@ namespace Puerts.Editor
 
                 public static TypeGenInfo FromType(Type type, List<Type> genTypes)
                 {
-                    var methodGroups = Puerts.Utils.GetMethodAndOverrideMethod(type, Utils.Flags).Where(m => !Utils.isFiltered(m))
+                    var methodGroups = Puerts.Utils.GetMethodAndOverrideMethod(type, Utils.Flags)
+                        .Where(m => !Utils.isFiltered(m))
                         .Where(m => !m.IsSpecialName && Puerts.Utils.IsSupportedMethod(m))
-                        .GroupBy(m => new MethodKey { Name = m.Name, IsStatic = m.IsStatic })
+                        .GroupBy(m => new MethodKey { Name = m.Name, IsStatic = m.IsStatic, IsLazyMember = Utils.getBindingMode(m) == Utils.BindingMode.LazyBinding })
                         .ToDictionary(i => i.Key, i => i.Cast<MethodBase>().ToList());
                     var extensionMethods = Puerts.Utils.GetExtensionMethodsOf(type);
                     if (extensionMethods != null)
@@ -363,18 +376,24 @@ namespace Puerts.Editor
                         }
                     }
                     var extensionMethodGroup = extensionMethods != null ? extensionMethods
-                        .GroupBy(m => new MethodKey { Name = m.Name, IsStatic = false })
+                        .GroupBy(m => new MethodKey { Name = m.Name, IsStatic = false, IsLazyMember = Utils.getBindingMode(m) == Utils.BindingMode.LazyBinding })
                         .ToDictionary(i => i.Key, i => i.Cast<MethodBase>().ToList()) : new Dictionary<MethodKey, List<MethodBase>>();
 
-                    var indexs = type.GetProperties(Utils.Flags).Where(m => !Utils.isFiltered(m))
-                        .Where(p => p.GetIndexParameters().GetLength(0) == 1).Select(p => IndexGenInfo.FromPropertyInfo(p)).ToArray();
+                    var indexs = type.GetProperties(Utils.Flags)
+                        .Where(m => !Utils.isFiltered(m))
+                        .Where(p => p.GetIndexParameters().GetLength(0) == 1)
+                        .Select(p => IndexGenInfo.FromPropertyInfo(p))
+                        .ToArray();
                     var operatorGroups = type.GetMethods(Utils.Flags)
                         .Where(m => !Utils.isFiltered(m) && m.IsSpecialName && m.Name.StartsWith("op_") && m.IsStatic)
                         .Where(m => m.Name != "op_Explicit" && m.Name != "op_Implicit")
-                        .GroupBy(m => new MethodKey { Name = m.Name, IsStatic = m.IsStatic })
+                        .GroupBy(m => new MethodKey { Name = m.Name, IsStatic = m.IsStatic, IsLazyMember = Utils.getBindingMode(m) == Utils.BindingMode.LazyBinding })
                         .Select(i => i.Cast<MethodBase>().ToList());
 
-                    var constructors = type.GetConstructors(Utils.Flags).Where(m => !Utils.isFiltered(m)).Cast<MethodBase>().ToList();
+                    var constructors = type.GetConstructors(Utils.Flags)
+                        .Where(m => !Utils.isFiltered(m) && Utils.getBindingMode(m) != Utils.BindingMode.LazyBinding)
+                        .Cast<MethodBase>()
+                        .ToList();
 
                     return new TypeGenInfo
                     {
@@ -386,6 +405,8 @@ namespace Puerts.Editor
                             .Distinct()
                             .ToArray(),
                         Name = type.GetFriendlyName(),
+                        IsValueType = type.IsValueType,
+                        
                         Methods = methodGroups
                             .Select(kv =>
                             {
@@ -394,18 +415,29 @@ namespace Puerts.Editor
                                 extensionMethodGroup.Remove(kv.Key);
                                 return MethodGenInfo.FromType(type, false, kv.Value, exOverloads);
                             })
-                            .Concat(extensionMethodGroup.Select(kv => MethodGenInfo.FromType(type, false, null, kv.Value))).ToArray(),
-                        IsValueType = type.IsValueType,
+                            .Concat(
+                                extensionMethodGroup
+                                    .Select(kv => MethodGenInfo.FromType(type, false, null, kv.Value))
+                            )
+                            .ToArray(),
                         Constructor = !type.IsAbstract ? MethodGenInfo.FromType(type, true, constructors) : null,
                         Properties = type.GetProperties(Utils.Flags)
                             .Where(m => !Utils.isFiltered(m))
                             .Where(p => !p.IsSpecialName && p.GetIndexParameters().GetLength(0) == 0)
-                            .Select(p => PropertyGenInfo.FromPropertyInfo(p)).Concat(
-                                type.GetFields(Utils.Flags).Where(m => !Utils.isFiltered(m)).Select(f => PropertyGenInfo.FromFieldInfo(f))).ToArray(),
+                            .Select(p => PropertyGenInfo.FromPropertyInfo(p))
+                            .Concat(
+                                type.GetFields(Utils.Flags)
+                                    .Where(m => !Utils.isFiltered(m))
+                                    .Select(f => PropertyGenInfo.FromFieldInfo(f))
+                            )
+                            .ToArray(),
                         GetIndexs = indexs.Where(i => i.HasGetter).ToArray(),
                         SetIndexs = indexs.Where(i => i.HasSetter).ToArray(),
                         Operators = operatorGroups.Select(m => MethodGenInfo.FromType(type, false, m)).ToArray(),
-                        Events = type.GetEvents(Utils.Flags).Where(m => !Utils.isFiltered(m)).Select(e => EventGenInfo.FromEventInfo(e)).ToArray(),
+                        Events = type.GetEvents(Utils.Flags)
+                            .Where(m => !Utils.isFiltered(m))
+                            .Select(e => EventGenInfo.FromEventInfo(e))
+                            .ToArray(),
                     };
                 }
             }
@@ -417,6 +449,7 @@ namespace Puerts.Editor
                 public string UnderlyingTypeName;
             }
 
+            // represent a javascript function's parameter
             public class ParameterGenInfo : DataTypeInfo
             {
                 public bool IsOut;
@@ -431,10 +464,11 @@ namespace Puerts.Editor
                     JsValueType ExpectJsType = isParams ?
                         GeneralGetterManager.GetJsTypeMask(parameterInfo.ParameterType.GetElementType()) : 
                         GeneralGetterManager.GetJsTypeMask(parameterInfo.ParameterType);
+                    bool IsByRef = parameterInfo.ParameterType.IsByRef;
                     var result = new ParameterGenInfo()
                     {
-                        IsOut = !parameterInfo.IsIn && parameterInfo.IsOut && parameterInfo.ParameterType.IsByRef,
-                        IsByRef = parameterInfo.ParameterType.IsByRef,
+                        IsOut = parameterInfo.IsOut && IsByRef,
+                        IsByRef = IsByRef && !parameterInfo.IsIn,
                         TypeName = Utils.RemoveRefAndToConstraintType(parameterInfo.ParameterType).GetFriendlyName(),
                         ExpectJsType = Utils.ToCode(ExpectJsType),
                         IsParams = isParams,
@@ -449,12 +483,15 @@ namespace Puerts.Editor
                 }
             }
 
+            // represent a javascript class's property
             public class PropertyGenInfo : DataTypeInfo
             {
                 public string Name;
                 public bool IsStatic;
                 public bool HasGetter;
                 public bool HasSetter;
+                // 虽然还没实现，但是先占坑。Register阶段用反射代替
+                public bool IsLazyMember;
 
                 public static PropertyGenInfo FromPropertyInfo(PropertyInfo propertyInfo)
                 {
@@ -468,6 +505,7 @@ namespace Puerts.Editor
                         IsStatic = isStatic,
                         HasGetter = getMethod != null && getMethod.IsPublic,
                         HasSetter = setMethod != null && setMethod.IsPublic,
+                        IsLazyMember = Utils.getBindingMode(propertyInfo) == Utils.BindingMode.LazyBinding
                     };
                     Utils.FillEnumInfo(result, propertyInfo.PropertyType);
                     return result;
@@ -482,17 +520,21 @@ namespace Puerts.Editor
                         IsStatic = fieldInfo.IsStatic,
                         HasGetter = true,
                         HasSetter = !fieldInfo.IsInitOnly && !fieldInfo.IsLiteral,
+                        IsLazyMember = Utils.getBindingMode(fieldInfo) == Utils.BindingMode.LazyBinding
                     };
                     Utils.FillEnumInfo(result, fieldInfo.FieldType);
                     return result;
                 }
             }
 
+            // represent a javascript class's index getter/setter
             public class IndexGenInfo : DataTypeInfo
             {
                 public ParameterGenInfo IndexParameter;
                 public bool HasGetter;
                 public bool HasSetter;
+                // 虽然还没实现，但是先占坑。Register阶段用反射代替
+                public bool IsLazyMember;
 
                 public static IndexGenInfo FromPropertyInfo(PropertyInfo propertyInfo)
                 {
@@ -506,16 +548,20 @@ namespace Puerts.Editor
                         HasSetter = setMethod != null && setMethod.IsPublic,
                     };
                     Utils.FillEnumInfo(result, propertyInfo.PropertyType);
+                    result.IsLazyMember = Utils.getBindingMode(propertyInfo) == Utils.BindingMode.LazyBinding;
                     return result;
                 }
             }
 
+            // represent a add/remove method in javascript class
             public class EventGenInfo : DataTypeInfo
             {
                 public string Name;
                 public bool IsStatic;
                 public bool HasAdd;
                 public bool HasRemove;
+                // 虽然还没实现，但是先占坑。Register阶段用反射代替
+                public bool IsLazyMember;
 
                 public static EventGenInfo FromEventInfo(EventInfo eventInfo)
                 {
@@ -524,6 +570,7 @@ namespace Puerts.Editor
                     bool isStatic = addMethod == null ? removeMethod.IsStatic : addMethod.IsStatic;
                     return new EventGenInfo()
                     {
+                        IsLazyMember = Utils.getBindingMode(eventInfo) == Utils.BindingMode.LazyBinding,
                         Name = eventInfo.Name,
                         TypeName = eventInfo.EventHandlerType.GetFriendlyName(),
                         IsStatic = isStatic,
@@ -533,6 +580,7 @@ namespace Puerts.Editor
                 }
             }
 
+            // represent a method's overloads in javascript class
             public class OverloadGenInfo : DataTypeInfo
             {
                 public ParameterGenInfo[] ParameterInfos;
@@ -563,7 +611,7 @@ namespace Puerts.Editor
                             ParameterInfos = parameters.Select(info => ParameterGenInfo.FromParameterInfo(info)).ToArray(),
                             TypeName = Utils.RemoveRefAndToConstraintType(methodInfo.ReturnType).GetFriendlyName(),
                             IsVoid = methodInfo.ReturnType == typeof(void),
-                            EllipsisedParameters = false
+                            EllipsisedParameters = false,
                         };
                         Utils.FillEnumInfo(mainInfo, methodInfo.ReturnType);
                         mainInfo.HasParams = mainInfo.ParameterInfos.Any(info => info.IsParams);
@@ -579,7 +627,7 @@ namespace Puerts.Editor
                                     ParameterInfos = parameters.Select(info => ParameterGenInfo.FromParameterInfo(info)).Take(i).ToArray(),
                                     TypeName = Utils.RemoveRefAndToConstraintType(methodInfo.ReturnType).GetFriendlyName(),
                                     IsVoid = methodInfo.ReturnType == typeof(void),
-                                    EllipsisedParameters = true
+                                    EllipsisedParameters = true,
                                 };
                                 Utils.FillEnumInfo(optionalInfo, methodInfo.ReturnType);
                                 optionalInfo.HasParams = optionalInfo.ParameterInfos.Any(info => info.IsParams);
@@ -599,7 +647,7 @@ namespace Puerts.Editor
                             ParameterInfos = constructorInfo.GetParameters().Select(info => ParameterGenInfo.FromParameterInfo(info)).ToArray(),
                             TypeName = constructorInfo.DeclaringType.GetFriendlyName(),
                             IsVoid = false,
-                            EllipsisedParameters = false
+                            EllipsisedParameters = false,
                         };
                         mainInfo.HasParams = mainInfo.ParameterInfos.Any(info => info.IsParams);
                         ret.Add(mainInfo);
@@ -614,7 +662,7 @@ namespace Puerts.Editor
                                     ParameterInfos = constructorInfo.GetParameters().Select(info => ParameterGenInfo.FromParameterInfo(info)).Take(i).ToArray(),
                                     TypeName = constructorInfo.DeclaringType.GetFriendlyName(),
                                     IsVoid = false,
-                                    EllipsisedParameters = true
+                                    EllipsisedParameters = true,
                                 };
                                 optionalInfo.HasParams = optionalInfo.ParameterInfos.Any(info => info.IsParams);
                                 ret.Add(optionalInfo);
@@ -634,6 +682,7 @@ namespace Puerts.Editor
                 }
             }
 
+            // represent a method in javascript class
             public class MethodGenInfo
             {
                 public string Name;
@@ -641,7 +690,7 @@ namespace Puerts.Editor
                 public OverloadGenInfo[][] OverloadGroups;
                 public bool HasOverloads;
                 public int OverloadCount;
-                        
+                public bool IsLazyMember;
                 public static MethodGenInfo FromType(Type type, bool isCtor, List<MethodBase> overloads, List<MethodBase> extensionOverloads = null)
                 {
                     var ret = new List<OverloadGenInfo>();
@@ -692,17 +741,21 @@ namespace Puerts.Editor
                         isStatic = false;
                     }
 
+                    var FirstOverload = overloads != null && overloads.Count > 0 ? overloads[0] : (
+                        extensionOverloads != null && extensionOverloads.Count > 0 ? extensionOverloads[0] : null
+                    );
+
                     var result = new MethodGenInfo()
                     {
                         Name = name,
                         IsStatic = isStatic,
+                        IsLazyMember = FirstOverload == null ? false : Utils.getBindingMode(FirstOverload) == Utils.BindingMode.LazyBinding,
                         HasOverloads = ret.Count > 1,
                         OverloadCount = ret.Count,
                         OverloadGroups = ret
                             .GroupBy(m => m.ParameterInfos.Length + (m.HasParams ? 0 : 9999))
                             .Select(lst => {
-                                // 因为加上了查找父类的同名函数，这里要去除参数一样的overload
-                                // there are some overload from baseclass, so we need to distinct the overloads with same parameterinfo
+                                // some overloads are from the base class, some overloads may have the same parameters, so we need to distinct the overloads with same parameterinfo
                                 Dictionary<string, OverloadGenInfo> distincter = new Dictionary<string, OverloadGenInfo>();
 
                                 foreach (var overload in lst) 
@@ -715,6 +768,11 @@ namespace Puerts.Editor
                                     }
                                     else 
                                     {
+                                        // if the value in distincter is null. Means that this overload is unavailable(will cause ambigious)
+                                        if (existedOverload == null) 
+                                        {
+                                            continue;
+                                        }
                                         if (!overload.EllipsisedParameters)
                                         {
                                             if (existedOverload == null || existedOverload.EllipsisedParameters) 
@@ -758,13 +816,14 @@ namespace Puerts.Editor
                 public bool IsOptional;
                 public override bool Equals(object obj)
                 {
-                    if (obj != null && obj is TsParameterGenInfo info)
+                    if (obj != null && obj is TsParameterGenInfo)
                     {
+                        TsParameterGenInfo info = (TsParameterGenInfo)obj;
                         return this.Name == info.Name &&
                             this.TypeName == info.TypeName &&
-                            this.IsByRef != info.IsByRef &&
-                            this.IsParams != info.IsParams &&
-                            this.IsOptional != info.IsOptional;
+                            this.IsByRef == info.IsByRef &&
+                            this.IsParams == info.IsParams &&
+                            this.IsOptional == info.IsOptional;
                     }
                     return base.Equals(obj);
                 }
@@ -783,8 +842,8 @@ namespace Puerts.Editor
                     return new TsParameterGenInfo()
                     {
                         Name = parameterInfo.Name,
-                        IsByRef = parameterInfo.ParameterType.IsByRef,
-                        TypeName = Utils.GetTsTypeName(Utils.ToConstraintType(parameterInfo.ParameterType, isGenericTypeDefinition), isParams),
+                        IsByRef = parameterInfo.ParameterType.IsByRef && !parameterInfo.IsIn,
+                        TypeName = Utils.GetTsTypeName(Utils.ToConstraintType(parameterInfo.ParameterType, isGenericTypeDefinition), isParams, parameterInfo),
                         IsParams = isParams,
                         IsOptional = parameterInfo.IsOptional
                     };
@@ -794,9 +853,9 @@ namespace Puerts.Editor
 
             public class TsMethodGenInfoComparer : IEqualityComparer<TsMethodGenInfo>
             {
-                public bool Equals(TsMethodGenInfo x, TsMethodGenInfo y) => x.Equals(y);
+                public bool Equals(TsMethodGenInfo x, TsMethodGenInfo y) { return x.Equals(y); }
 
-                public int GetHashCode(TsMethodGenInfo obj) => 0;
+                public int GetHashCode(TsMethodGenInfo obj) { return 0; }
             }
 
             public class TsMethodGenInfo
@@ -809,8 +868,9 @@ namespace Puerts.Editor
                 public bool IsStatic;
                 public override bool Equals(object obj)
                 {
-                    if (obj != null && obj is TsMethodGenInfo info)
+                    if (obj != null && obj is TsMethodGenInfo)
                     {
+                        TsMethodGenInfo info = (TsMethodGenInfo)obj;
                         if (this.ParameterInfos.Length != info.ParameterInfos.Length ||
                             this.Name != info.Name ||
                             this.TypeName != info.TypeName ||
@@ -1001,8 +1061,8 @@ namespace Puerts.Editor
                                     Document = DocResolver.GetTsDocument(p),
                                     TypeName = Utils.GetTsTypeName(p.PropertyType),
                                     IsStatic = Utils.IsStatic(p),
-                                    HasGetter = p.GetMethod != null && p.GetMethod.IsPublic,
-                                    HasSetter = p.SetMethod != null && p.SetMethod.IsPublic
+                                    HasGetter = p.GetGetMethod() != null && p.GetGetMethod().IsPublic,
+                                    HasSetter = p.GetSetMethod() != null && p.GetSetMethod().IsPublic
                                 })
                             )
                             .ToArray() : new TsPropertyGenInfo[] { },
@@ -1027,7 +1087,7 @@ namespace Puerts.Editor
                         else
                         {
                             var m = type.GetMethod("Invoke");
-                            var tsFuncDef = "(" + string.Join(", ", m.GetParameters().Select(p => p.Name + ": " + Utils.GetTsTypeName(p.ParameterType)).ToArray()) + ") => " + Utils.GetTsTypeName(m.ReturnType);
+                            var tsFuncDef = "(" + string.Join(", ", m.GetParameters().Select(p => p.Name + ": " + Utils.GetTsTypeName(p.ParameterType, false, p)).ToArray()) + ") => " + Utils.GetTsTypeName(m.ReturnType);
                             result.DelegateDef = tsFuncDef;
                         }
                     }
@@ -1216,7 +1276,8 @@ namespace Puerts.Editor
 
                     foreach (var info in methodInfos)
                     {
-                        if (!result.TryGetValue(info.Name, out var list))
+                        List<TsMethodGenInfo> list;
+                        if (!result.TryGetValue(info.Name, out list))
                         {
                             list = new List<TsMethodGenInfo>();
                             result.Add(info.Name, list);
@@ -1407,6 +1468,18 @@ namespace Puerts.Editor
                 AssetDatabase.Refresh();
             }
 
+            [MenuItem("Puerts/Generate index.d.ts ESM compatible (unstable)", false, 1)]
+            public static void GenerateDTSESM()
+            {
+                var start = DateTime.Now;
+                var saveTo = Configure.GetCodeOutputDirectory();
+                Directory.CreateDirectory(saveTo);
+                Directory.CreateDirectory(Path.Combine(saveTo, "Typing/csharp"));
+                GenerateCode(saveTo, true, true);
+                Debug.Log("finished! use " + (DateTime.Now - start).TotalMilliseconds + " ms");
+                AssetDatabase.Refresh();
+            }
+
             [MenuItem("Puerts/Clear Generated Code", false, 2)]
             public static void ClearAll()
             {
@@ -1419,7 +1492,7 @@ namespace Puerts.Editor
                 }
             }
 
-            public static void GenerateCode(string saveTo, bool tsOnly = false)
+            public static void GenerateCode(string saveTo, bool tsOnly = false, bool esmMode = false)
             {
                 Utils.filters = Configure.GetFilters();
                 var configure = Configure.GetConfigureByTags(new List<string>() {
@@ -1450,8 +1523,7 @@ namespace Puerts.Editor
 
                 using (var jsEnv = new JsEnv())
                 {
-                    var templateGetter = jsEnv.Eval<Func<string, Func<object, string>>>("require('puerts/gencode/main.js')");
-                    var wrapRender = templateGetter("type.tpl");
+                    var wrapRender = jsEnv.Eval<Func<GenClass.TypeGenInfo, string>>("require('puerts/templates/wrapper.tpl.cjs')");
 
                     if (!tsOnly)
                     {
@@ -1482,7 +1554,7 @@ namespace Puerts.Editor
                             }
                         }
 
-                        var autoRegisterRender = templateGetter("autoreg.tpl");
+                        var autoRegisterRender = jsEnv.Eval<Func<GenClass.TypeGenInfo[], string>>("require('puerts/templates/wrapper-reg.tpl.cjs')");
                         using (StreamWriter textWriter = new StreamWriter(saveTo + "AutoStaticCodeRegister.cs", false, Encoding.UTF8))
                         {
                             string fileContext = autoRegisterRender(typeGenInfos.ToArray());
@@ -1490,11 +1562,12 @@ namespace Puerts.Editor
                             textWriter.Flush();
                         }
                     }
-
-                    var typingRender = templateGetter("typing.tpl");
+                    
+                    jsEnv.UsingFunc<DTS.TypingGenInfo, bool, string>();
+                    var typingRender = jsEnv.Eval<Func<DTS.TypingGenInfo, bool, string>>("require('puerts/templates/dts.tpl.cjs')");
                     using (StreamWriter textWriter = new StreamWriter(saveTo + "Typing/csharp/index.d.ts", false, Encoding.UTF8))
                     {
-                        string fileContext = typingRender(DTS.TypingGenInfo.FromTypes(tsTypes));
+                        string fileContext = typingRender(DTS.TypingGenInfo.FromTypes(tsTypes), esmMode);
                         textWriter.Write(fileContext);
                         textWriter.Flush();
                     }

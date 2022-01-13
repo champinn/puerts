@@ -8,7 +8,7 @@
 #include <cstring>
 #include "V8Utils.h"
 
-#define LIB_VERSION 13
+#define LIB_VERSION 15
 
 using puerts::JSEngine;
 using puerts::FValue;
@@ -27,35 +27,31 @@ V8_EXPORT int GetLibVersion()
     return LIB_VERSION;
 }
 
-V8_EXPORT v8::Isolate *CreateJSEngine()
+V8_EXPORT int GetLibBackend()
 {
-    auto JsEngine = new JSEngine(false, nullptr, nullptr);
-    return JsEngine->MainIsolate;
+#if WITH_NODEJS
+    return puerts::JSEngineBackend::Node;
+#elif WITH_QUICKJS
+    return puerts::JSEngineBackend::QuickJS;
+#else
+    return puerts::JSEngineBackend::V8;
+#endif
 }
 
-V8_EXPORT v8::Isolate *CreateJSEngineWithNode()
+V8_EXPORT v8::Isolate *CreateJSEngine()
 {
-    auto JsEngine = new JSEngine(true, nullptr, nullptr);
+    auto JsEngine = new JSEngine(nullptr, nullptr);
     return JsEngine->MainIsolate;
 }
 
 V8_EXPORT v8::Isolate *CreateJSEngineWithExternalEnv(void* external_quickjs_runtime, void* external_quickjs_context)
 {
 #if WITH_QUICKJS
-    auto JsEngine = new JSEngine(false, external_quickjs_runtime, external_quickjs_context);
+    auto JsEngine = new JSEngine(external_quickjs_runtime, external_quickjs_context);
     return JsEngine->MainIsolate;
 #else
     return nullptr;
 #endif
-}
-
-V8_EXPORT bool IsJSEngineBackendSupported(puerts::JSEngineBackend mode) {
-#if !WITH_NODEJS
-    if (mode == puerts::JSEngineBackend::Node) {
-        return false;
-    }
-#endif
-    return true;
 }
 
 V8_EXPORT void DestroyJSEngine(v8::Isolate *Isolate)
@@ -68,6 +64,26 @@ V8_EXPORT void SetGlobalFunction(v8::Isolate *Isolate, const char *Name, CSharpF
 {
     auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
     JsEngine->SetGlobalFunction(Name, Callback, Data);
+}
+
+V8_EXPORT void SetModuleResolver(v8::Isolate *Isolate, CSharpModuleResolveCallback Resolver, int32_t Idx)
+{
+    auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
+    JsEngine->ModuleResolver = Resolver;
+    JsEngine->Idx = Idx;
+}
+
+V8_EXPORT FResultInfo * ExecuteModule(v8::Isolate *Isolate, const char* Path, const char* Exportee)
+{
+    auto JsEngine = FV8Utils::IsolateData<JSEngine>(Isolate);
+    if (JsEngine->ExecuteModule(Path, Exportee))
+    {
+        return &(JsEngine->ResultInfo);
+    }
+    else
+    {
+        return nullptr;
+    }
 }
 
 V8_EXPORT FResultInfo * Eval(v8::Isolate *Isolate, const char *Code, const char* Path)

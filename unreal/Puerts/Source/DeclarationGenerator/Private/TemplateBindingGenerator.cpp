@@ -3,6 +3,7 @@
 #include "TemplateBindingGenerator.h"
 #include "JSClassRegister.h"
 #include "Interfaces/IPluginManager.h"
+#include "CoreUObject.h"
 
 struct FGenImp
 {
@@ -27,7 +28,7 @@ struct FGenImp
     {
         Output << "declare module \"cpp\" {\n";
         Output << "    import * as UE from \"ue\"\n";
-        Output << "    import {$Ref, $Nullable} from \"puerts\"\n\n";
+        Output << "    import {$Ref, $Nullable, cstring} from \"puerts\"\n\n";
     }
 
     void GenArguments(const puerts::CFunctionInfo* Type, FStringBuffer& Buff)
@@ -38,39 +39,55 @@ struct FGenImp
                 Buff << ", ";
             auto argInfo = Type->Argument(i);
 
-            Buff << FString::Printf(TEXT("p%d"), i) << ": ";
+            Buff << FString::Printf(TEXT("p%d"), i);
 
-            bool IsReference = argInfo->IsRef();
-            bool IsNullable = !IsReference && argInfo->IsPointer();
-            if (IsNullable)
+            if (i >= Type->ArgumentCount() - Type->DefaultCount())
             {
-                Buff << "$Nullable<";
-            }
-            if (IsReference)
-            {
-                Buff << "$Ref<";
+                Buff << "?";
             }
 
-            const puerts::CTypeInfo* TypeInfo = Type->Argument(i);
-            Buff << GetNamePrefix(TypeInfo) << GetName(TypeInfo);
+            Buff << ": ";
 
-            if (IsNullable)
+            if (strcmp(argInfo->Name(), "cstring") != 0 && !argInfo->IsUEType() && !argInfo->IsObjectType() && argInfo->IsPointer())
             {
-                Buff << ">";
+                Buff << "ArrayBuffer";
             }
-            if (IsReference)
+            else
             {
-                Buff << ">";
+                bool IsReference = argInfo->IsRef();
+                bool IsNullable = !IsReference && argInfo->IsPointer();
+                if (IsNullable)
+                {
+                    Buff << "$Nullable<";
+                }
+                if (IsReference)
+                {
+                    Buff << "$Ref<";
+                }
+
+                const puerts::CTypeInfo* TypeInfo = Type->Argument(i);
+                Buff << GetNamePrefix(TypeInfo) << GetName(TypeInfo);
+
+                if (IsNullable)
+                {
+                    Buff << ">";
+                }
+                if (IsReference)
+                {
+                    Buff << ">";
+                }
             }
         }
     }
 
     void GenClass(const puerts::JSClassDefinition* ClassDefinition)
     {
-        Output << "    class " << ClassDefinition->CPPTypeName;
-        if (ClassDefinition->CPPSuperTypeName)
+        if (IsUEContainer(ClassDefinition->ScriptName))
+            return;
+        Output << "    class " << ClassDefinition->ScriptName;
+        if (ClassDefinition->SuperTypeId)
         {
-            Output << " extends " << ClassDefinition->CPPSuperTypeName;
+            Output << " extends " << puerts::FindClassByID(ClassDefinition->SuperTypeId)->ScriptName;
         }
         Output << " {\n";
 
@@ -98,14 +115,31 @@ struct FGenImp
             ++PropertyInfo;
         }
 
+        puerts::NamedPropertyInfo* VariableInfo = ClassDefinition->VariableInfos;
+        while (VariableInfo && VariableInfo->Name && VariableInfo->Type)
+        {
+            int Pos = VariableInfo - ClassDefinition->VariableInfos;
+            Output << "        static " << (ClassDefinition->Variables[Pos].Setter ? "" : "readonly ") << VariableInfo->Name << ": "
+                   << VariableInfo->Type << ";\n";
+            ++VariableInfo;
+        }
+
         puerts::NamedFunctionInfo* FunctionInfo = ClassDefinition->FunctionInfos;
         while (FunctionInfo && FunctionInfo->Name && FunctionInfo->Type)
         {
             FStringBuffer Tmp;
-            Tmp << "        static " << FunctionInfo->Name << "(";
-            GenArguments(FunctionInfo->Type, Tmp);
-            const puerts::CTypeInfo* ReturnType = FunctionInfo->Type->Return();
-            Tmp << ") :" << GetNamePrefix(ReturnType) << GetName(ReturnType) << ";\n";
+            Tmp << "        static " << FunctionInfo->Name;
+            if (FunctionInfo->Type->Return())
+            {
+                Tmp << "(";
+                GenArguments(FunctionInfo->Type, Tmp);
+                const puerts::CTypeInfo* ReturnType = FunctionInfo->Type->Return();
+                Tmp << ") :" << GetNamePrefix(ReturnType) << GetName(ReturnType) << ";\n";
+            }
+            else
+            {
+                Tmp << FunctionInfo->Type->CustomSignature() << ";\n";
+            }
             if (!AddedFunctions.Contains(Tmp.Buffer))
             {
                 AddedFunctions.Add(Tmp.Buffer);
@@ -118,10 +152,18 @@ struct FGenImp
         while (MethodInfo && MethodInfo->Name && MethodInfo->Type)
         {
             FStringBuffer Tmp;
-            Tmp << "        " << MethodInfo->Name << "(";
-            GenArguments(MethodInfo->Type, Tmp);
-            const puerts::CTypeInfo* ReturnType = MethodInfo->Type->Return();
-            Tmp << ") :" << GetNamePrefix(ReturnType) << GetName(ReturnType) << ";\n";
+            Tmp << "        " << MethodInfo->Name;
+            if (MethodInfo->Type->Return())
+            {
+                Tmp << "(";
+                GenArguments(MethodInfo->Type, Tmp);
+                const puerts::CTypeInfo* ReturnType = MethodInfo->Type->Return();
+                Tmp << ") :" << GetNamePrefix(ReturnType) << GetName(ReturnType) << ";\n";
+            }
+            else
+            {
+                Tmp << MethodInfo->Type->CustomSignature() << ";\n";
+            }
             if (!AddedFunctions.Contains(Tmp.Buffer))
             {
                 AddedFunctions.Add(Tmp.Buffer);
@@ -148,7 +190,7 @@ void UTemplateBindingGenerator::Gen_Implementation() const
     puerts::ForeachRegisterClass(
         [&](const puerts::JSClassDefinition* ClassDefinition)
         {
-            if (ClassDefinition->CPPTypeName)
+            if (ClassDefinition->TypeId && ClassDefinition->ScriptName)
             {
                 Gen.GenClass(ClassDefinition);
             }

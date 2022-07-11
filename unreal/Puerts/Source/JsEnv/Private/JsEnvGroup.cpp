@@ -6,12 +6,15 @@
  * which is part of this source code package.
  */
 
+#if !defined(ENGINE_INDEPENDENT_JSENV)
 #include "JsEnvGroup.h"
 #include "JsEnvImpl.h"
+#include "TsDynamicInvoker.h"
+#include "DynamicInvoker.h"
 
 namespace puerts
 {
-class FGroupDynamicInvoker : public ITsDynamicInvoker
+class FGroupDynamicInvoker : public ITsDynamicInvoker, public IDynamicInvoker
 {
 public:
     FGroupDynamicInvoker(std::vector<FJsEnvImpl*> InJsEnvs) : JsEnvs(InJsEnvs)
@@ -43,6 +46,29 @@ public:
         }
     }
 
+    virtual void InvokeDelegateCallback(UDynamicDelegateProxy* Proxy, void* Params) override
+    {
+        ensureMsgf(false, TEXT("InvokeDelegateCallback in GroupDynamicInvoker"));
+    }
+#if !defined(ENGINE_INDEPENDENT_JSENV)
+    virtual void JsConstruct(UClass* Class, UObject* Object, const v8::UniquePersistent<v8::Function>& Constructor,
+        const v8::UniquePersistent<v8::Object>& Prototype) override
+    {
+        ensureMsgf(false, TEXT("JsConstruct in GroupDynamicInvoker"));
+    }
+
+    virtual void InvokeJsMethod(UObject* ContextObject, UJSGeneratedFunction* Function, FFrame& Stack, void* RESULT_PARAM) override
+    {
+        ensureMsgf(false, TEXT("InvokeJsMethod in GroupDynamicInvoker"));
+    }
+
+    virtual void InvokeMixinMethod(
+        UObject* ContextObject, UJSGeneratedFunction* Function, FFrame& Stack, void* RESULT_PARAM) override
+    {
+        JsEnvs[GetSelectIndex(ContextObject)]->InvokeMixinMethod(ContextObject, Function, Stack, RESULT_PARAM);
+    }
+#endif
+
     std::vector<FJsEnvImpl*> JsEnvs;
 
     std::function<int(UObject*, int)> Selector;
@@ -63,14 +89,15 @@ FJsEnvGroup::FJsEnvGroup(int Size, const FString& ScriptRoot)
 }
 
 FJsEnvGroup::FJsEnvGroup(int Size, std::shared_ptr<IJSModuleLoader> InModuleLoader, std::shared_ptr<ILogger> InLogger,
-    int InDebugStartPort, void* InExternalRuntime, void* InExternalContext)
+    int InDebugStartPort, std::function<void(const FString&)> InOnSourceLoadedCallback, void* InExternalRuntime,
+    void* InExternalContext)
 {
     check(Size > 1);
     std::shared_ptr<IJSModuleLoader> SharedModuleLoader = std::move(InModuleLoader);
     for (int i = 0; i < Size; i++)
     {
-        JsEnvList.push_back(
-            std::make_shared<FJsEnvImpl>(SharedModuleLoader, InLogger, InDebugStartPort + i, InExternalRuntime, InExternalContext));
+        JsEnvList.push_back(std::make_shared<FJsEnvImpl>(
+            SharedModuleLoader, InLogger, InDebugStartPort + i, InOnSourceLoadedCallback, InExternalRuntime, InExternalContext));
     }
     Init();
 }
@@ -86,6 +113,7 @@ void FJsEnvGroup::Init()
     for (int i = 0; i < JsEnvs.size(); i++)
     {
         JsEnvs[i]->TsDynamicInvoker = GroupDynamicInvoker;
+        JsEnvs[i]->MixinInvoker = GroupDynamicInvoker;
     }
 }
 
@@ -141,3 +169,4 @@ void FJsEnvGroup::SetJsEnvSelector(std::function<int(UObject*, int)> InSelector)
 }
 
 }    // namespace puerts
+#endif

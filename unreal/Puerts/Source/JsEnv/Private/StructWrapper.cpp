@@ -68,6 +68,14 @@ std::shared_ptr<FFunctionTranslator> FStructWrapper::GetFunctionTranslator(UFunc
     return Iter->second;
 }
 
+void FStructWrapper::RefreshMethod(UFunction* InFunction)
+{
+    if (!InFunction->HasAnyFunctionFlags(FUNC_Static))
+    {
+        GetMethodTranslator(InFunction, false);
+    }
+}
+
 void FStructWrapper::InitTemplateProperties(v8::Isolate* Isolate, UStruct* InStruct, v8::Local<v8::FunctionTemplate> Template)
 {
     auto ClassDefinition = FindClassByType(Struct.Get());
@@ -85,6 +93,21 @@ void FStructWrapper::InitTemplateProperties(v8::Isolate* Isolate, UStruct* InStr
                                            : v8::Local<v8::Value>();
 
             Template->PrototypeTemplate()->SetAccessorProperty(FV8Utils::InternalString(Isolate, PropertyInfo->Name),
+                v8::FunctionTemplate::New(Isolate, PropertyInfo->Getter, Data),
+                v8::FunctionTemplate::New(Isolate, PropertyInfo->Setter, Data), PropertyAttribute);
+            ++PropertyInfo;
+        }
+
+        PropertyInfo = ClassDefinition->Variables;
+        while (PropertyInfo && PropertyInfo->Name && PropertyInfo->Getter)
+        {
+            v8::PropertyAttribute PropertyAttribute = v8::DontDelete;
+            if (!PropertyInfo->Setter)
+                PropertyAttribute = (v8::PropertyAttribute)(PropertyAttribute | v8::ReadOnly);
+            auto Data = PropertyInfo->Data ? static_cast<v8::Local<v8::Value>>(v8::External::New(Isolate, PropertyInfo->Data))
+                                           : v8::Local<v8::Value>();
+
+            Template->SetAccessorProperty(FV8Utils::InternalString(Isolate, PropertyInfo->Name),
                 v8::FunctionTemplate::New(Isolate, PropertyInfo->Getter, Data),
                 v8::FunctionTemplate::New(Isolate, PropertyInfo->Setter, Data), PropertyAttribute);
             ++PropertyInfo;
@@ -222,6 +245,12 @@ v8::Local<v8::FunctionTemplate> FStructWrapper::ToFunctionTemplate(v8::Isolate* 
     Result->Set(FV8Utils::InternalString(Isolate, "StaticClass"),
         v8::FunctionTemplate::New(Isolate, StaticClass, v8::External::New(Isolate, this)));
 
+    if (!Struct->IsA<UClass>())
+    {
+        Result->Set(FV8Utils::InternalString(Isolate, "StaticStruct"),
+            v8::FunctionTemplate::New(Isolate, StaticClass, v8::External::New(Isolate, this)));
+    }
+
 #ifndef WITH_QUICKJS
     Result->InstanceTemplate()->SetHandler(v8::NamedPropertyHandlerConfiguration(
         [](v8::Local<v8::Name> Property, const v8::PropertyCallbackInfo<v8::Value>& Info)
@@ -350,7 +379,7 @@ void FStructWrapper::Load(const v8::FunctionCallbackInfo<v8::Value>& Info)
 
     if (Class && Info.Length() == 1 && Info[0]->IsString())
     {
-        auto Object = StaticLoadObject(Class, nullptr, *FV8Utils::ToFString(Isolate, Info[0]));
+        auto Object = StaticLoadObject(Class, nullptr, *FV8Utils::ToFString(Isolate, Info[0]), nullptr, LOAD_NoWarn);
         if (Object)
         {
             auto Result = FV8Utils::IsolateData<IObjectMapper>(Isolate)->FindOrAdd(Isolate, Context, Object->GetClass(), Object);
@@ -399,6 +428,10 @@ void FScriptStructWrapper::New(
             if (ExternalInitialize)
             {
                 Memory = ExternalInitialize(Info);
+                if (!Memory)    // do not bind nullptr
+                {
+                    return;
+                }
             }
             else
             {
@@ -443,14 +476,14 @@ void FScriptStructWrapper::OnGarbageCollectedWithFree(const v8::WeakCallbackInfo
 {
     FScriptStructWrapper* ScriptStructWrapper = Data.GetParameter();
     void* ScriptStructMemory = DataTransfer::MakeAddressWithHighPartOfTwo(Data.GetInternalField(0), Data.GetInternalField(1));
-    FV8Utils::IsolateData<IObjectMapper>(Data.GetIsolate())->UnBindStruct(ScriptStructMemory);
+    FV8Utils::IsolateData<IObjectMapper>(Data.GetIsolate())->UnBindStruct(ScriptStructWrapper, ScriptStructMemory);
     Free(ScriptStructWrapper->Struct, ScriptStructWrapper->ExternalFinalize, ScriptStructMemory);
 }
 
-void FScriptStructWrapper::OnGarbageCollected(const v8::WeakCallbackInfo<UScriptStruct>& Data)
+void FScriptStructWrapper::OnGarbageCollected(const v8::WeakCallbackInfo<FScriptStructWrapper>& Data)
 {
     void* ScriptStructMemory = DataTransfer::MakeAddressWithHighPartOfTwo(Data.GetInternalField(0), Data.GetInternalField(1));
-    FV8Utils::IsolateData<IObjectMapper>(Data.GetIsolate())->UnBindStruct(ScriptStructMemory);
+    FV8Utils::IsolateData<IObjectMapper>(Data.GetIsolate())->UnBindStruct(Data.GetParameter(), ScriptStructMemory);
 }
 
 void FClassWrapper::OnGarbageCollected(const v8::WeakCallbackInfo<UClass>& Data)

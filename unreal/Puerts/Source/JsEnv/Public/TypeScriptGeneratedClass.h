@@ -27,6 +27,9 @@ public:
 
     TSet<FName> FunctionToRedirect;
 
+    FCriticalSection PendingConstructJobMutex;
+    TArray<FGraphEventRef> PendingConstructJobs;
+
     static void StaticConstructor(const FObjectInitializer& ObjectInitializer);
 
     void ObjectInitialize(const FObjectInitializer& ObjectInitializer);

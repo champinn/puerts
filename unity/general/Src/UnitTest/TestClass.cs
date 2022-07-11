@@ -11,6 +11,27 @@ using System.Collections.Generic;
 
 namespace Puerts.UnitTest
 {
+    public class Util
+    {
+        public static int InvokeJSFunctionIntInt(Func<int, int> jsFunc, int arg)
+        {
+            return jsFunc(arg);
+        }
+    }
+
+    public class ParentParent
+    {
+        public static void doSth()
+        {
+        }
+    }
+    public class GenericParent<T> : ParentParent
+    {
+    }
+    public class SonClass: GenericParent<int>
+    {
+    }
+
     public struct S
     {
         int age;
@@ -504,18 +525,6 @@ namespace Puerts.UnitTest
             if (b && Callback != null) Callback();
             return true;
         }
-    }
     
-    public class TypedValue
-    {
-        static object lastCallbackValue = null;
-        public static void Callback(object o)
-        {
-            lastCallbackValue = o;
-        }
-        public static Type GetLastCallbackValueType() 
-        {
-            return lastCallbackValue == null ? null : lastCallbackValue.GetType();
-        }
     }
 }

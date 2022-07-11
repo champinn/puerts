@@ -1,4 +1,4 @@
-![Logo](../../pic/puerts_logo.png)
+![Logo](../../doc/pic/puerts_logo.png)
 
 [![license](http://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Tencent/puerts/blob/master/LICENSE)
 [![release](https://img.shields.io/badge/release-v1.0.0-blue.svg)](https://github.com/Tencent/puerts/releases)
@@ -19,7 +19,7 @@ puerts is a TypeScript programming solution within game engines.
 
 * In contrast to lua script, TypeScript supports static type checking, which significantly improves code robustness and maintainability.
 
-* High efficiency: supports reflection binding throughout the platform (engine) - no extra steps (code generation) needes for development.
+* High efficiency: supports reflection binding throughout the platform (engine) - no extra steps (code generation) needed for development.
 
 * High performance：supports static binding throughout the platform (engine) - takes care of complex scenes
 

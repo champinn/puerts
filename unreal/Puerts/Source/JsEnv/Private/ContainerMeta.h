@@ -4,7 +4,11 @@
 
 #include "CoreMinimal.h"
 #include "PropertyMacros.h"
+#include "UObject/UnrealType.h"
+#include "UObject/TextProperty.h"
+#if !defined(ENGINE_INDEPENDENT_JSENV)
 #include "EngineMinimal.h"
+#endif
 
 USTRUCT(noexport)
 struct FPropertyMetaRoot
@@ -34,16 +38,16 @@ public:
 
     PropertyMacro* GetBuiltinProperty(BuiltinType type);
 
-    PropertyMacro* GetObjectProperty(UStruct* Struct);
+    PropertyMacro* GetObjectProperty(UField* Field);
 
-    void NotifyUStructDeleted(const UStruct* Struct);
+    void NotifyElementTypeDeleted(const UField* Struct);
 
 private:
     UScriptStruct* PropertyMetaRoot;
 
     PropertyMacro* BuiltinProperty[MaxBuiltinType];
 
-    TMap<UStruct*, PropertyMacro*> ObjectPropertyMap;
+    TMap<UField*, PropertyMacro*> ObjectPropertyMap;
 };
 
 }    // namespace puerts

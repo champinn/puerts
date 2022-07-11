@@ -16,7 +16,6 @@
 static void* _FGuidNew_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 0)
     {
@@ -55,7 +54,6 @@ static void _FGuidDelete_(void* Ptr)
 static void FGuidM_set_Item(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 1)
     {
@@ -79,7 +77,6 @@ static void FGuidM_set_Item(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void FGuidM_get_Item(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 1)
     {
@@ -105,7 +102,6 @@ static void FGuidM_get_Item(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void FGuidM_Invalidate(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 0)
     {
@@ -128,7 +124,6 @@ static void FGuidM_Invalidate(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void FGuidM_IsValid(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 0)
     {
@@ -153,7 +148,6 @@ static void FGuidM_IsValid(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void FGuidM_ToString(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 0)
     {
@@ -198,7 +192,6 @@ static void FGuidM_ToString(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void FGuidS_NewGuid(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 0)
     {
@@ -220,7 +213,6 @@ static void FGuidS_NewGuid(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void FGuidS_Parse(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 2)
     {
@@ -245,7 +237,6 @@ static void FGuidS_Parse(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void FGuidS_ParseExact(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
     if (Info.Length() == 3)
     {
@@ -272,7 +263,6 @@ static void FGuidS_ParseExact(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void _FGuidAGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());
@@ -284,12 +274,12 @@ static void _FGuidAGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
     }
 
     auto V8Result = v8::Integer::New(Isolate, Self->A);
+    puerts::DataTransfer::LinkOuter<FGuid, uint32>(Context, Info.Holder(), V8Result);
     Info.GetReturnValue().Set(V8Result);
 }
 static void _FGuidASet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());
@@ -305,7 +295,6 @@ static void _FGuidASet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void _FGuidBGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());
@@ -317,12 +306,12 @@ static void _FGuidBGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
     }
 
     auto V8Result = v8::Integer::New(Isolate, Self->B);
+    puerts::DataTransfer::LinkOuter<FGuid, uint32>(Context, Info.Holder(), V8Result);
     Info.GetReturnValue().Set(V8Result);
 }
 static void _FGuidBSet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());
@@ -338,7 +327,6 @@ static void _FGuidBSet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void _FGuidCGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());
@@ -350,12 +338,12 @@ static void _FGuidCGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
     }
 
     auto V8Result = v8::Integer::New(Isolate, Self->C);
+    puerts::DataTransfer::LinkOuter<FGuid, uint32>(Context, Info.Holder(), V8Result);
     Info.GetReturnValue().Set(V8Result);
 }
 static void _FGuidCSet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());
@@ -371,7 +359,6 @@ static void _FGuidCSet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 static void _FGuidDGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());
@@ -383,12 +370,12 @@ static void _FGuidDGet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
     }
 
     auto V8Result = v8::Integer::New(Isolate, Self->D);
+    puerts::DataTransfer::LinkOuter<FGuid, uint32>(Context, Info.Holder(), V8Result);
     Info.GetReturnValue().Set(V8Result);
 }
 static void _FGuidDSet_(const v8::FunctionCallbackInfo<v8::Value>& Info)
 {
     v8::Isolate* Isolate = Info.GetIsolate();
-    v8::HandleScope HandleScope(Isolate);
     v8::Local<v8::Context> Context = Isolate->GetCurrentContext();
 
     auto Self = puerts::DataTransfer::GetPointerFast<FGuid>(Info.Holder());

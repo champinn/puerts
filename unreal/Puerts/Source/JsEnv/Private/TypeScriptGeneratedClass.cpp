@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Tencent is pleased to support the open source community by making Puerts available.
  * Copyright (C) 2020 THL A29 Limited, a Tencent company.  All rights reserved.
  * Puerts is licensed under the BSD 3-Clause License, except for the third-party components listed in the file 'LICENSE' which may
@@ -20,6 +20,22 @@ DEFINE_FUNCTION(UTypeScriptGeneratedClass::execCallJS)
     UTypeScriptGeneratedClass* Class = Cast<UTypeScriptGeneratedClass>(Func->GetOuter());
     if (Class)
     {
+        if (Class->PendingConstructJobs.Num() > 0)
+        {
+            FScopeLock ScopeLock(&Class->PendingConstructJobMutex);
+            for (auto PendingConstructJob : Class->PendingConstructJobs)
+            {
+                if (!PendingConstructJob)
+                    continue;
+#if ENGINE_MINOR_VERSION >= 26 || ENGINE_MAJOR_VERSION > 4
+                PendingConstructJob->Wait();
+#else
+                FTaskGraphInterface::Get().WaitUntilTaskCompletes(PendingConstructJob, ENamedThreads::AnyThread);
+#endif
+            }
+            Class->PendingConstructJobs.Empty();
+        }
+
         auto PinedDynamicInvoker = Class->DynamicInvoker.Pin();
         if (PinedDynamicInvoker)
         {
@@ -64,11 +80,82 @@ void UTypeScriptGeneratedClass::ObjectInitialize(const FObjectInitializer& Objec
         GetSuperClass()->ClassConstructor(ObjectInitializer);
     }
 
+#if !WITH_EDITOR
+    if (Object->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
+        return;
+#endif
+
+#ifdef THREAD_SAFE
     auto PinedDynamicInvoker = DynamicInvoker.Pin();
     if (PinedDynamicInvoker)
     {
         PinedDynamicInvoker->TsConstruct(this, Object);
     }
+#else
+    auto PinedDynamicInvoker = DynamicInvoker.Pin();
+    if (PinedDynamicInvoker)
+    {
+        if (IsInGameThread())
+        {
+            FScopeLock ScopeLock(&PendingConstructJobMutex);
+            if (PendingConstructJobs.Num() > 0)
+            {
+                for (auto PendingConstructJob : PendingConstructJobs)
+                {
+                    if (!PendingConstructJob)
+                        continue;
+#if ENGINE_MINOR_VERSION >= 26 || ENGINE_MAJOR_VERSION > 4
+                    PendingConstructJob->Wait();
+#else
+                    FTaskGraphInterface::Get().WaitUntilTaskCompletes(PendingConstructJob, ENamedThreads::AnyThread);
+#endif
+                }
+                PendingConstructJobs.Empty();
+            }
+            PinedDynamicInvoker->TsConstruct(this, Object);
+        }
+        else
+        {
+            FScopeLock ScopeLock(&PendingConstructJobMutex);
+
+            TWeakObjectPtr<UTypeScriptGeneratedClass> Class = this;
+            TWeakObjectPtr<UObject> Self = Object;
+            int Index = PendingConstructJobs.Num();
+
+            PendingConstructJobs.Add(FFunctionGraphTask::CreateAndDispatchWhenReady(
+                [Class, Self, Index]()
+                {
+                    if (Class.IsValid())
+                    {
+                        if (Self.IsValid())
+                        {
+                            auto PinedDynamicInvoker = Class->DynamicInvoker.Pin();
+                            if (PinedDynamicInvoker)
+                            {
+                                PinedDynamicInvoker->TsConstruct(Class.Get(), Self.Get());
+                            }
+                            else
+                            {
+                                UE_LOG(Puerts, Error, TEXT("call delay TsConstruct of %s(%p) fail!, DynamicInvoker invalid"),
+                                    *Self->GetName(), Self.Get());
+                            }
+                        }
+                        else
+                        {
+                            UE_LOG(Puerts, Error, TEXT("call delay TsConstruct fail!, Self of %s invalid"), *Class->GetName());
+                        }
+                        FScopeLock ScopeLock(&Class->PendingConstructJobMutex);
+                        Class->PendingConstructJobs[Index] = nullptr;
+                    }
+                    else
+                    {
+                        UE_LOG(Puerts, Error, TEXT("call delay TsConstruct fail!, Class invalid"));
+                    }
+                },
+                TStatId{}, nullptr, ENamedThreads::GameThread));
+        }
+    }
+#endif
     else
     {
         UE_LOG(Puerts, Error, TEXT("call TsConstruct of %s(%p) fail!, DynamicInvoker invalid"), *Object->GetName(), Object);
@@ -154,5 +241,11 @@ void UTypeScriptGeneratedClass::Bind()
 
         //可避免非CDO的在PostConstructInit从基类拷贝值
         // ClassFlags |= CLASS_Native;
+    }
+#if WITH_EDITOR
+    if (IsRunningGame())
+#endif
+    {
+        ClassConstructor = &StaticConstructor;
     }
 }

@@ -10,10 +10,15 @@
 #include "V8Utils.h"
 #include "ObjectMapper.h"
 #include "StructWrapper.h"
+#if !defined(ENGINE_INDEPENDENT_JSENV)
 #include "Engine/UserDefinedStruct.h"
+#endif
 #include "ArrayBuffer.h"
 #include "ContainerWrapper.h"
 #include "JsObject.h"
+#ifdef PUERTS_FTEXT_AS_OBJECT
+#include "TypeInfo.hpp"
+#endif
 
 namespace puerts
 {
@@ -35,6 +40,8 @@ void FPropertyTranslator::Getter(
         return;
     }
 
+    v8::Local<v8::Value> Ret;
+
     if (OwnerIsClass)
     {
         UObject* Object = FV8Utils::GetUObject(Info.Holder());
@@ -48,12 +55,23 @@ void FPropertyTranslator::Getter(
             FV8Utils::ThrowException(Isolate, "access a invalid object");
             return;
         }
-        Info.GetReturnValue().Set(UEToJsInContainer(Isolate, Context, Object, true));
+        Ret = UEToJsInContainer(Isolate, Context, Object, true);
     }
     else
     {
-        Info.GetReturnValue().Set(UEToJsInContainer(Isolate, Context, FV8Utils::GetPointer(Info.Holder()), true));
+        auto Ptr = FV8Utils::GetPointer(Info.Holder());
+        if (!Ptr)
+        {
+            FV8Utils::ThrowException(Isolate, "access a null struct");
+            return;
+        }
+        Ret = UEToJsInContainer(Isolate, Context, Ptr, true);
     }
+    if (NeedLinkOuter)
+    {
+        LinkOuterImpl(Context, Info.Holder(), Ret);
+    }
+    Info.GetReturnValue().Set(Ret);
 }
 
 void FPropertyTranslator::Setter(const v8::FunctionCallbackInfo<v8::Value>& Info)
@@ -91,7 +109,13 @@ void FPropertyTranslator::Setter(v8::Isolate* Isolate, v8::Local<v8::Context>& C
     }
     else
     {
-        JsToUEInContainer(Isolate, Context, Value, FV8Utils::GetPointer(Info.Holder()), true);
+        auto Ptr = FV8Utils::GetPointer(Info.Holder());
+        if (!Ptr)
+        {
+            FV8Utils::ThrowException(Isolate, "access a null struct");
+            return;
+        }
+        JsToUEInContainer(Isolate, Context, Value, Ptr, true);
     }
 }
 
@@ -149,6 +173,7 @@ void FPropertyTranslator::SetAccessor(v8::Isolate* Isolate, v8::Local<v8::Functi
         auto Self = v8::External::New(Isolate, this);
         auto GetterTemplate = v8::FunctionTemplate::New(Isolate, Getter, Self);
         auto SetterTemplate = v8::FunctionTemplate::New(Isolate, Setter, Self);
+#if !defined(ENGINE_INDEPENDENT_JSENV)
         Template->PrototypeTemplate()->SetAccessorProperty(
             FV8Utils::InternalString(Isolate, OwnerStruct && OwnerStruct->IsA<UUserDefinedStruct>() ?
 #if ENGINE_MINOR_VERSION >= 23 || ENGINE_MAJOR_VERSION > 4
@@ -159,6 +184,10 @@ void FPropertyTranslator::SetAccessor(v8::Isolate* Isolate, v8::Local<v8::Functi
 #endif
                                                                                                     : Property->GetName()),
             GetterTemplate, SetterTemplate, v8::DontDelete);
+#else
+        Template->PrototypeTemplate()->SetAccessorProperty(
+            FV8Utils::InternalString(Isolate, Property->GetName()), GetterTemplate, SetterTemplate, v8::DontDelete);
+#endif
     }
 }
 
@@ -373,7 +402,26 @@ public:
     bool JsToUE(v8::Isolate* Isolate, v8::Local<v8::Context>& Context, const v8::Local<v8::Value>& Value, void* ValuePtr,
         bool DeepCopy) const override
     {
-        NameProperty->SetPropertyValue(ValuePtr, FName(*FV8Utils::ToFString(Isolate, Value)));
+        if (Value->IsArrayBuffer())
+        {
+            auto Ab = v8::Local<v8::ArrayBuffer>::Cast(Value);
+#if defined(HAS_ARRAYBUFFER_NEW_WITHOUT_STL)
+            size_t ByteLength;
+            auto Data = v8::ArrayBuffer_Get_Data(Ab, ByteLength);
+            if (ByteLength == sizeof(FName))
+            {
+                NameProperty->SetPropertyValue(ValuePtr, *static_cast<FName*>(Data));
+                return true;
+            }
+#else
+            if (Ab->GetContents().ByteLength() == sizeof(FName))
+            {
+                NameProperty->SetPropertyValue(ValuePtr, *static_cast<FName*>(Ab->GetContents().Data()));
+                return true;
+            }
+#endif
+        }
+        NameProperty->SetPropertyValue(ValuePtr, FV8Utils::ToFName(Isolate, Value));
         return true;
     }
 };
@@ -388,13 +436,23 @@ public:
     v8::Local<v8::Value> UEToJs(
         v8::Isolate* Isolate, v8::Local<v8::Context>& Context, const void* ValuePtr, bool PassByPointer) const override
     {
+#ifndef PUERTS_FTEXT_AS_OBJECT
         return FV8Utils::ToV8String(Isolate, TextProperty->GetPropertyValue(ValuePtr));
+#else
+        return DataTransfer::FindOrAddCData(Context->GetIsolate(), Context, puerts::StaticTypeId<FText>::get(),
+            PassByPointer ? ValuePtr : new FText(TextProperty->GetPropertyValue(ValuePtr)), PassByPointer);
+#endif
     }
 
     bool JsToUE(v8::Isolate* Isolate, v8::Local<v8::Context>& Context, const v8::Local<v8::Value>& Value, void* ValuePtr,
         bool DeepCopy) const override
     {
+#ifndef PUERTS_FTEXT_AS_OBJECT
         TextProperty->SetPropertyValue(ValuePtr, FText::FromString(FV8Utils::ToFString(Isolate, Value)));
+#else
+        auto TextPtr = DataTransfer::GetPointerFast<FText>(Value.As<v8::Object>());
+        TextProperty->SetPropertyValue(ValuePtr, TextPtr ? *TextPtr : FText());
+#endif
         return true;
     }
 };
@@ -542,6 +600,10 @@ class FScriptStructPropertyTranslator : public FPropertyWithDestructorReflection
 public:
     explicit FScriptStructPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
     {
+        if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
+        {
+            ParamShallowCopySize = StructProperty->Struct->GetStructureSize();
+        }
     }
 
     v8::Local<v8::Value> UEToJs(
@@ -568,7 +630,14 @@ public:
 
         if (Ptr)
         {
-            StructProperty->CopySingleValue(ValuePtr, Ptr);
+            if (DeepCopy || !ParamShallowCopySize)
+            {
+                StructProperty->CopySingleValue(ValuePtr, Ptr);
+            }
+            else
+            {
+                FMemory::Memcpy(ValuePtr, Ptr, ParamShallowCopySize);
+            }
         }
         else if (Value->IsObject())
         {
@@ -595,13 +664,21 @@ public:
         if (ArrayBuffer->bCopy)
         {
             v8::Local<v8::ArrayBuffer> Ab = v8::ArrayBuffer::New(Isolate, ArrayBuffer->Length);
+#if defined(HAS_ARRAYBUFFER_NEW_WITHOUT_STL)
+            void* Buff = static_cast<char*>(v8::ArrayBuffer_Get_Data(Ab));
+#else
             void* Buff = Ab->GetContents().Data();
+#endif
             ::memcpy(Buff, ArrayBuffer->Data, ArrayBuffer->Length);
             return Ab;
         }
         else
         {
+#if defined(HAS_ARRAYBUFFER_NEW_WITHOUT_STL)
+            return v8::ArrayBuffer_New_Without_Stl(Isolate, ArrayBuffer->Data, ArrayBuffer->Length);
+#else
             return v8::ArrayBuffer::New(Isolate, ArrayBuffer->Data, ArrayBuffer->Length);
+#endif
         }
     }
 
@@ -612,15 +689,25 @@ public:
         if (Value->IsArrayBufferView())
         {
             v8::Local<v8::ArrayBufferView> BuffView = Value.As<v8::ArrayBufferView>();
-            auto ABC = BuffView->Buffer()->GetContents();
-            ArrayBuffer.Data = static_cast<char*>(ABC.Data()) + BuffView->ByteOffset();
+            auto Ab = BuffView->Buffer();
+#if defined(HAS_ARRAYBUFFER_NEW_WITHOUT_STL)
+            ArrayBuffer.Data = static_cast<char*>(v8::ArrayBuffer_Get_Data(Ab)) + BuffView->ByteOffset();
+#else
+            ArrayBuffer.Data = static_cast<char*>(Ab->GetContents().Data()) + BuffView->ByteOffset();
+#endif
             ArrayBuffer.Length = BuffView->ByteLength();
         }
         else if (Value->IsArrayBuffer())
         {
             auto Ab = v8::Local<v8::ArrayBuffer>::Cast(Value);
+#if defined(HAS_ARRAYBUFFER_NEW_WITHOUT_STL)
+            size_t ByteLength;
+            ArrayBuffer.Data = v8::ArrayBuffer_Get_Data(Ab, ByteLength);
+            ArrayBuffer.Length = ByteLength;
+#else
             ArrayBuffer.Data = Ab->GetContents().Data();
             ArrayBuffer.Length = Ab->GetContents().ByteLength();
+#endif
         }
 
         StructProperty->CopySingleValue(ValuePtr, &ArrayBuffer);
@@ -689,6 +776,10 @@ class FScriptArrayPropertyTranslator : public FPropertyWithDestructorReflection
 public:
     explicit FScriptArrayPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
     {
+        if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
+        {
+            ParamShallowCopySize = sizeof(FScriptArray);
+        }
     }
 
     v8::Local<v8::Value> UEToJs(
@@ -715,7 +806,14 @@ public:
         auto Ptr = FV8Utils::GetPointer(Context, Value);
         if (Ptr)
         {
-            ArrayProperty->CopyCompleteValue(ValuePtr, Ptr);
+            if (DeepCopy || !ParamShallowCopySize)
+            {
+                ArrayProperty->CopyCompleteValue(ValuePtr, Ptr);
+            }
+            else
+            {
+                FMemory::Memcpy(ValuePtr, Ptr, sizeof(FScriptArray));
+            }
         }
         return true;
     }
@@ -728,6 +826,10 @@ class FScriptSetPropertyTranslator : public FPropertyWithDestructorReflection
 public:
     explicit FScriptSetPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
     {
+        if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
+        {
+            ParamShallowCopySize = sizeof(FScriptSet);
+        }
     }
 
     v8::Local<v8::Value> UEToJs(
@@ -753,7 +855,14 @@ public:
         auto Ptr = FV8Utils::GetPointer(Context, Value);
         if (Ptr)
         {
-            SetProperty->CopyCompleteValue(ValuePtr, Ptr);
+            if (DeepCopy || !ParamShallowCopySize)
+            {
+                SetProperty->CopyCompleteValue(ValuePtr, Ptr);
+            }
+            else
+            {
+                FMemory::Memcpy(ValuePtr, Ptr, sizeof(FScriptSet));
+            }
         }
         return true;
     }
@@ -766,6 +875,10 @@ class FScriptMapPropertyTranslator : public FPropertyWithDestructorReflection
 public:
     explicit FScriptMapPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
     {
+        if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
+        {
+            ParamShallowCopySize = sizeof(FScriptMap);
+        }
     }
 
     v8::Local<v8::Value> UEToJs(
@@ -791,7 +904,14 @@ public:
         auto Ptr = FV8Utils::GetPointer(Context, Value);
         if (Ptr)
         {
-            MapProperty->CopyCompleteValue(ValuePtr, Ptr);
+            if (DeepCopy || !ParamShallowCopySize)
+            {
+                MapProperty->CopyCompleteValue(ValuePtr, Ptr);
+            }
+            else
+            {
+                FMemory::Memcpy(ValuePtr, Ptr, sizeof(FScriptMap));
+            }
         }
         return true;
     }
@@ -892,6 +1012,21 @@ public:
             {
                 *Des = *Src;
             }
+            else if (Des && Value->IsArray())
+            {
+                auto Array = Value->ToObject(Context).ToLocalChecked();
+                auto Obj = FV8Utils::GetUObject(Context, Array->Get(Context, 0).ToLocalChecked());
+                if (Obj)
+                {
+                    auto FuncName = Array->Get(Context, 1).ToLocalChecked();
+                    if (FuncName->IsString())
+                    {
+                        FScriptDelegate Delegate;
+                        Delegate.BindUFunction(Obj, *FV8Utils::ToFString(Isolate, FuncName));
+                        *Des = Delegate;
+                    }
+                }
+            }
         }
         return true;
     }
@@ -905,6 +1040,7 @@ public:
     explicit FOutReflection(std::unique_ptr<FPropertyTranslator> InInner) : FPropertyTranslator(InInner->Property)
     {
         Inner = std::move(InInner);
+        ParamShallowCopySize = Inner->ParamShallowCopySize;
     }
 
     // {
@@ -915,8 +1051,7 @@ public:
         v8::Isolate* Isolate, v8::Local<v8::Context>& Context, const void* ValuePtr, bool PassByPointer) const override
     {
         auto Result = v8::Object::New(Isolate);
-        auto ReturnVal = Result->Set(
-            Context, FV8Utils::InternalString(Isolate, "value"), Inner->UEToJs(Isolate, Context, ValuePtr, PassByPointer));
+        auto ReturnVal = Result->Set(Context, 0, Inner->UEToJs(Isolate, Context, ValuePtr, PassByPointer));
         return Result;
     }
 
@@ -926,7 +1061,7 @@ public:
         if (Value->IsObject())
         {
             auto Outer = Value->ToObject(Context).ToLocalChecked();
-            auto Realvalue = Outer->Get(Context, FV8Utils::InternalString(Isolate, "value")).ToLocalChecked();
+            auto Realvalue = Outer->Get(Context, 0).ToLocalChecked();
             return Inner->JsToUE(Isolate, Context, Realvalue, ValuePtr, DeepCopy);
         }
         return true;
@@ -938,8 +1073,18 @@ public:
         if (Value->IsObject())
         {
             auto Outer = Value->ToObject(Context).ToLocalChecked();
-            auto ReturnVal = Outer->Set(
-                Context, FV8Utils::InternalString(Isolate, "value"), Inner->UEToJs(Isolate, Context, ValuePtr, PassByPointer));
+            if (Inner->ParamShallowCopySize)
+            {
+                auto Realvalue = Outer->Get(Context, 0).ToLocalChecked();
+                auto Ptr = FV8Utils::GetPointer(Context, Realvalue);
+                if (Ptr)
+                {
+                    FMemory::Memcpy(Ptr, ValuePtr, ParamShallowCopySize);
+                    return;
+                }
+            }
+
+            auto ReturnVal = Outer->Set(Context, 0, Inner->UEToJs(Isolate, Context, ValuePtr, PassByPointer));
         }
     }
 

@@ -8,8 +8,6 @@
 
 #pragma once
 
-#include <functional>
-#include "CoreUObject.h"
 #include <map>
 #include <vector>
 
@@ -58,6 +56,8 @@ struct DECLARATIONGENERATOR_API FTypeScriptDeclarationGenerator
 
     std::map<UObject*, FString> NamespaceMap;
 
+    bool RefFromOuter = false;
+
     const FString& GetNamespace(UObject* Obj);
 
     FString GetNameWithNamespace(UObject* Obj);
@@ -70,7 +70,7 @@ struct DECLARATIONGENERATOR_API FTypeScriptDeclarationGenerator
 
     virtual void Begin(FString Namespace = TEXT("ue"));
 
-    void GenTypeScriptDeclaration();
+    void GenTypeScriptDeclaration(bool GenStruct = false, bool GenEnum = false);
 
     virtual void Gen(UObject* ToGen);
 
@@ -104,3 +104,5 @@ struct DECLARATIONGENERATOR_API FTypeScriptDeclarationGenerator
     {
     }
 };
+
+bool IsUEContainer(const char* name);

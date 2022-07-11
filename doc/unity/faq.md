@@ -26,15 +26,21 @@ System.Text.Encoding.UTF8.GetBytes("你好");
 
 这是[vscode](vscode_debug.md)，其它IDE的看各IDE的指引，按nodejs的调试来处理即可。
 
+## 如果需要调试，ILoader的debugpath参数该如何处理？
+ts/js中调用require('./a/b')时，ILoader会被调用并传入字符串".../a/b.js"(相对rootPath的完整路径)，你需要理解这字符串并(从文件/内存/网络等)加载好js文件并直接返回。而debugpath需要返回调试器可以理解的路径(比如js文件的绝对路径: D:/.../a/b.js)，通过设置out string debuggpath参数返回，调试器后续根据这个文件路径来匹配文件上的断点。
+> Windows平台不区分文件大小写名称且使用反斜杠"\\"代替"/"
+
+
 ## can not find delegate bridge for XXX
 
 你将一个js函数映射为一个delegate有时会报这错误，XXX就是要映射的delegate，可能的情况如下：
 
-* 该delegate带了值类型参数或者返回值，解决办法：如果没有返回值，用JsEnv.UsingAction声明下，有返回值就用JsEnv.UsingFunc声明。
+* 该delegate带了值类型参数或者返回值，解决办法：如果没有返回值，用JsEnv.UsingAction声明下，有返回值就用JsEnv.UsingFunc声明。关于做这项工作的必要性，可参见这个[stackoverflow问题](https://stackoverflow.com/questions/56183606/invoke-generic-method-via-reflection-in-c-sharp-il2cpp-on-ios)
 
 * 参数数量超过4个，解决办法：官方目前只支持4个，如果有需要，可以依葫芦画瓢写更多的参数支持。
 
 * 参数含ref，out的修饰，目前尚未支持，解决办法：填写issues来提需求
+
 
 ## maOS10.15以上,启动unity的时候提示puerts.bundle损坏,移动到废纸篓
 
@@ -52,6 +58,12 @@ sudo xattr -r -d com.apple.quarantine puerts.bundle
 
 unity默认会进行代码剪裁，简而言之unity发现某引擎api，系统api没有被业务c#使用，就不编译倒cpp。
 解决办法：1、对要调用的api生成wrap代码，这样c#里头就有了引用；2、通过link.xml告知unity别剪裁，link.xml的配置请参考unity官方文档。
+
+## 编辑器下运行正常，打包的时候生成代码报“没有某方法/属性/字段定义”怎么办？
+往往是由于该方法/属性/字段是扩在条件编译里头，只在UNITY_EDITOR下有效，这时需要把这方法/属性/字段通过Filter标签过滤，之后重新执行代码生成并打包。([discussions说明](https://github.com/Tencent/puerts/discussions/806))
+
+## 编辑器下运行正常，打包后调用扩展方法报错(不生成静态代码)
+默认打包后不再使用反射获取扩展函数, 可使用`PUERTS_REFLECT_ALL_EXTENSION`宏来开启反射.(反射速度慢, 建议在任何时候都应该生成静态代码)
 
 ## GetComponent<XXX>()在CS为null，但在JS调用却不为null，为什么
 其实那C#对象并不为null，是UnityEngine.Object重载的==操作符。当一个对象被Destroy，未初始化等情况，obj == null返回true；`GetComponent<XXX>()`如果组件不存在，Unity重载==的结果也会让其返回null。但这些C#对象并不为null，可以通过System.Object.ReferenceEquals(null, obj)来验证下。

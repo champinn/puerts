@@ -17,15 +17,20 @@ FJsEnv::FJsEnv(const FString& ScriptRoot)
 }
 
 FJsEnv::FJsEnv(std::shared_ptr<IJSModuleLoader> InModuleLoader, std::shared_ptr<ILogger> InLogger, int InDebugPort,
-    void* InExternalRuntime, void* InExternalContext)
+    std::function<void(const FString&)> InOnSourceLoadedCallback, void* InExternalRuntime, void* InExternalContext)
 {
-    GameScript =
-        std::make_unique<FJsEnvImpl>(std::move(InModuleLoader), InLogger, InDebugPort, InExternalRuntime, InExternalContext);
+    GameScript = std::make_unique<FJsEnvImpl>(
+        std::move(InModuleLoader), InLogger, InDebugPort, InOnSourceLoadedCallback, InExternalRuntime, InExternalContext);
 }
 
-void FJsEnv::Start(const FString& ModuleName, const TArray<TPair<FString, UObject*>>& Arguments)
+void FJsEnv::Start(const FString& ModuleName, const TArray<TPair<FString, UObject*>>& Arguments, bool IsScript)
 {
-    GameScript->Start(ModuleName, Arguments);
+    GameScript->Start(ModuleName, Arguments, IsScript);
+}
+
+bool FJsEnv::IdleNotificationDeadline(double DeadlineInSeconds)
+{
+    return GameScript->IdleNotificationDeadline(DeadlineInSeconds);
 }
 
 void FJsEnv::LowMemoryNotification()
@@ -33,11 +38,22 @@ void FJsEnv::LowMemoryNotification()
     GameScript->LowMemoryNotification();
 }
 
+void FJsEnv::RequestMinorGarbageCollectionForTesting()
+{
+    GameScript->RequestMinorGarbageCollectionForTesting();
+}
+
+void FJsEnv::RequestFullGarbageCollectionForTesting()
+{
+    GameScript->RequestFullGarbageCollectionForTesting();
+}
+
 void FJsEnv::WaitDebugger(double timeout)
 {
     GameScript->WaitDebugger(timeout);
 }
 
+#if !defined(ENGINE_INDEPENDENT_JSENV)
 void FJsEnv::TryBindJs(const class UObjectBase* InObject)
 {
     GameScript->TryBindJs(InObject);
@@ -47,6 +63,7 @@ void FJsEnv::RebindJs()
 {
     GameScript->RebindJs();
 }
+#endif
 
 FString FJsEnv::CurrentStackTrace()
 {
@@ -61,6 +78,16 @@ void FJsEnv::InitExtensionMethodsMap()
 void FJsEnv::ReloadModule(FName ModuleName, const FString& JsSource)
 {
     GameScript->ReloadModule(ModuleName, JsSource);
+}
+
+void FJsEnv::ReloadSource(const FString& Path, const std::string& JsSource)
+{
+    GameScript->ReloadSource(Path, JsSource);
+}
+
+void FJsEnv::OnSourceLoaded(std::function<void(const FString&)> Callback)
+{
+    GameScript->OnSourceLoaded(Callback);
 }
 
 }    // namespace puerts

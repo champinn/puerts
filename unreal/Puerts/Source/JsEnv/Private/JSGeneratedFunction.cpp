@@ -10,6 +10,7 @@
 
 DEFINE_FUNCTION(UJSGeneratedFunction::execCallJS)
 {
+#if !defined(ENGINE_INDEPENDENT_JSENV)
     UJSGeneratedFunction* Func = Cast<UJSGeneratedFunction>(Stack.CurrentNativeFunction ? Stack.CurrentNativeFunction : Stack.Node);
     check(Func);
     // UE_LOG(LogTemp, Warning, TEXT("overrided function called, %s(%p)"), *Func->GetName(), Func);
@@ -22,4 +23,28 @@ DEFINE_FUNCTION(UJSGeneratedFunction::execCallJS)
             PinedDynamicInvoker->InvokeJsMethod(Context, Func, Stack, RESULT_PARAM);
         }
     }
+#endif
+}
+
+DEFINE_FUNCTION(UJSGeneratedFunction::execCallMixin)
+{
+#if !defined(ENGINE_INDEPENDENT_JSENV)
+    UFunction* Func = Stack.CurrentNativeFunction ? Stack.CurrentNativeFunction : Stack.Node;
+    UJSGeneratedFunction* JsFunc = Cast<UJSGeneratedFunction>(Func);
+    if (!JsFunc)
+    {
+        JsFunc = Cast<UJSGeneratedFunction>(Func->GetSuperStruct());
+    }
+    check(JsFunc);
+    // UE_LOG(LogTemp, Warning, TEXT("overrided function called, %s(%p)"), *Func->GetName(), Func);
+
+    if (JsFunc)
+    {
+        auto PinedDynamicInvoker = JsFunc->DynamicInvoker.Pin();
+        if (PinedDynamicInvoker)
+        {
+            PinedDynamicInvoker->InvokeMixinMethod(Context, JsFunc, Stack, RESULT_PARAM);
+        }
+    }
+#endif
 }

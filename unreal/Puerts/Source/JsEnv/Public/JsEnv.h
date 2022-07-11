@@ -20,24 +20,38 @@
 #include "ObjectRetainer.h"
 #include "JSLogger.h"
 #include "JSModuleLoader.h"
+#if !defined(ENGINE_INDEPENDENT_JSENV)
 #include "ExtensionMethods.h"
+#endif
 
 namespace puerts
 {
 class JSENV_API IJsEnv
 {
 public:
-    virtual void Start(const FString& ModuleName, const TArray<TPair<FString, UObject*>>& Arguments) = 0;
+    virtual void Start(const FString& ModuleName, const TArray<TPair<FString, UObject*>>& Arguments, bool IsScript) = 0;
+
+    virtual bool IdleNotificationDeadline(double DeadlineInSeconds) = 0;
 
     virtual void LowMemoryNotification() = 0;
 
-    virtual void WaitDebugger(double timeout) = 0;
+    virtual void RequestMinorGarbageCollectionForTesting() = 0;
 
+    virtual void RequestFullGarbageCollectionForTesting() = 0;
+
+    virtual void WaitDebugger(double Timeout) = 0;
+
+#if !defined(ENGINE_INDEPENDENT_JSENV)
     virtual void TryBindJs(const class UObjectBase* InObject) = 0;
+
+    virtual void RebindJs() = 0;
+#endif
 
     virtual void ReloadModule(FName ModuleName, const FString& JsSource) = 0;
 
-    virtual void RebindJs() = 0;
+    virtual void ReloadSource(const FString& Path, const std::string& JsSource) = 0;
+
+    virtual void OnSourceLoaded(std::function<void(const FString&)> Callback) = 0;
 
     virtual FString CurrentStackTrace() = 0;
 
@@ -54,17 +68,32 @@ public:
     explicit FJsEnv(const FString& ScriptRoot = TEXT("JavaScript"));
 
     FJsEnv(std::shared_ptr<IJSModuleLoader> InModuleLoader, std::shared_ptr<ILogger> InLogger, int InDebugPort,
-        void* InExternalRuntime = nullptr, void* InExternalContext = nullptr);
+        std::function<void(const FString&)> InOnSourceLoadedCallback = nullptr, void* InExternalRuntime = nullptr,
+        void* InExternalContext = nullptr);
 
-    void Start(const FString& ModuleName, const TArray<TPair<FString, UObject*>>& Arguments = TArray<TPair<FString, UObject*>>());
+    void Start(const FString& ModuleName, const TArray<TPair<FString, UObject*>>& Arguments = TArray<TPair<FString, UObject*>>(),
+        bool IsScript = false);
+
+    bool IdleNotificationDeadline(double DeadlineInSeconds);
 
     void LowMemoryNotification();
 
-    void WaitDebugger(double timeout = 0);
+    // equivalent to Isolate->RequestGarbageCollectionForTesting(v8::Isolate::kMinorGarbageCollection)
+    // It is only valid to call this function if --expose_gc was specified
+    void RequestMinorGarbageCollectionForTesting();
+
+    // equivalent to Isolate->RequestGarbageCollectionForTesting(v8::Isolate::kFullGarbageCollection)
+    void RequestFullGarbageCollectionForTesting();
+
+    void WaitDebugger(double Timeout = 0);
 
     void TryBindJs(const class UObjectBase* InObject);
 
     void ReloadModule(FName ModuleName, const FString& JsSource);
+
+    void ReloadSource(const FString& Path, const std::string& JsSource);
+
+    void OnSourceLoaded(std::function<void(const FString&)> Callback);
 
     void RebindJs();
 

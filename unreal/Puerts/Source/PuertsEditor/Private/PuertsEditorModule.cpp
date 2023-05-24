@@ -16,12 +16,26 @@
 #include "SourceFileWatcher.h"
 #include "JSLogger.h"
 #include "JSModuleLoader.h"
+#include "Binding.hpp"
+#include "UEDataBinding.hpp"
+#include "Object.hpp"
 
 class FPuertsEditorModule : public IPuertsEditorModule
 {
     /** IModuleInterface implementation */
     void StartupModule() override;
     void ShutdownModule() override;
+
+    void SetCmdImpl(std::function<void(const FString&, const FString&)> Func) override
+    {
+        CmdImpl = Func;
+    }
+
+public:
+    static void SetCmdCallback(std::function<void(const FString&, const FString&)> Func)
+    {
+        Get().SetCmdImpl(Func);
+    }
 
 private:
     //
@@ -36,17 +50,60 @@ private:
     TSharedPtr<puerts::FSourceFileWatcher> SourceFileWatcher;
 
     bool Enabled = false;
+
+    std::function<void(const FString&, const FString&)> CmdImpl;
+
+    TUniquePtr<FAutoConsoleCommand> ConsoleCommand;
 };
+
+UsingCppType(FPuertsEditorModule);
+
+struct AutoRegisterForPEM
+{
+    AutoRegisterForPEM()
+    {
+        puerts::DefineClass<FPuertsEditorModule>()
+            .Function("SetCmdCallback", MakeFunction(&FPuertsEditorModule::SetCmdCallback))
+            .Register();
+    }
+};
+
+AutoRegisterForPEM _AutoRegisterForPEM__;
 
 IMPLEMENT_MODULE(FPuertsEditorModule, PuertsEditor)
 
 void FPuertsEditorModule::StartupModule()
 {
-    Enabled = IPuertsModule::Get().IsWatchEnabled();
+    Enabled = IPuertsModule::Get().IsWatchEnabled() && !IsRunningCommandlet();
 
     FEditorDelegates::PreBeginPIE.AddRaw(this, &FPuertsEditorModule::PreBeginPIE);
     FEditorDelegates::EndPIE.AddRaw(this, &FPuertsEditorModule::EndPIE);
-    FCoreDelegates::OnPostEngineInit.AddRaw(this, &FPuertsEditorModule::OnPostEngineInit);
+
+    ConsoleCommand = MakeUnique<FAutoConsoleCommand>(TEXT("Puerts"), TEXT("Puerts action"),
+        FConsoleCommandWithArgsDelegate::CreateLambda(
+            [this](const TArray<FString>& Args)
+            {
+                if (CmdImpl)
+                {
+                    FString CmdForJs = TEXT("");
+                    FString ArgsForJs = TEXT("");
+
+                    if (Args.Num() > 0)
+                    {
+                        CmdForJs = Args[0];
+                    }
+                    if (Args.Num() > 1)
+                    {
+                        ArgsForJs = Args[1];
+                    }
+                    CmdImpl(CmdForJs, ArgsForJs);
+                }
+                else
+                {
+                    UE_LOG(Puerts, Error, TEXT("Puerts command not initialized"));
+                }
+            }));
+    this->OnPostEngineInit();
 }
 
 TSharedPtr<FKismetCompilerContext> MakeCompiler(
@@ -87,13 +144,13 @@ void FPuertsEditorModule::OnPostEngineInit()
                 }
             });
 
-        TArray<TPair<FString, UObject*>> Arguments;
-        JsEnv->Start("require('PuertsEditor/CodeAnalyze')", Arguments, true);
+        JsEnv->Start("PuertsEditor/CodeAnalyze");
     }
 }
 
 void FPuertsEditorModule::ShutdownModule()
 {
+    CmdImpl = nullptr;
     if (JsEnv.IsValid())
     {
         JsEnv.Reset();

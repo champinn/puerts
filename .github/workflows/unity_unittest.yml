@@ -5,9 +5,10 @@ on:
   push:
     paths: 
       - unity/Assets/**
-      - unity/general/**
+      - unity/dotnet-test/**
       - unity/native_src/**
-      - unity/native_src_ourv8/**
+      - unity/native_src_il2cpp/**
+      - unity/cli/**
       - unreal/Puerts/Source/JsEnv/Private/V8InspectorImpl.cpp
       - unreal/Puerts/Source/JsEnv/Private/V8InspectorImpl.h
       - unreal/Puerts/Source/JsEnv/Private/PromiseRejectCallback.hpp
@@ -17,82 +18,78 @@ env:
   RUNID: 613573412
 
 jobs:
-  unittest-v8:
+  unittest-win-unity:
     runs-on: windows-2019
 
     steps:
-      - uses: actions/checkout@v2
-      - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v1.0.2
-      - name: Get backend artifact
-        uses: ./.github/workflows/composites/unity-download-backend/
+      - uses: actions/checkout@v3
+      - name: Setup Unity
+        uses: ./.github/workflows/composites/unity-setup/
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          backend: v8
-      - name: Build plugin
-        run: |
-          md unity\general\Bin
-          cd unity\native_src
-          .\make_win64.bat
-          copy build64_v8\Release\puerts.dll ..\general\Bin
+          os: 'win'
+          version: '2021.3.16f1'
+          cachekey: '2021'
+          UNITY_USERNAME: ${{ secrets.UNITY_USERNAME }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
       - name: UnitTest
         run: |
-          cd unity\general\vs2013
-          nuget restore Puerts.sln
-          nuget install NUnit.Runners -Version 3.2.0 -OutputDirectory testrunner -ExcludeVersion
-          msbuild /property:Configuration=Release Puerts.sln
-          ./testrunner/NUnit.ConsoleRunner/tools/nunit3-console.exe ../Bin/Puerts.UnitTest.dll   
-  unittest-quickjs:
+          cd unity
+          npm i
+          cd test/unity
+          node ../../cli unity-test --unity C:/UNITY/2021.3.16f1/Editor/Unity.exe
+      - name: TestResult
+        if: always()
+        shell: bash
+        run: |
+          cd unity/test/unity
+          echo "testresult in v1"
+          cat log1.txt | grep "Failed\|Passed" 
+          echo "testresult in v2"
+          cat log2.txt | grep "Failed\|Passed" 
+  unittest-win-dotnet:
     runs-on: windows-2019
 
     steps:
-      - uses: actions/checkout@v2
-      - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v1.0.2
-      - name: Get backend artifact
-        uses: ./.github/workflows/composites/unity-download-backend/
+      - uses: actions/setup-dotnet@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          backend: quickjs
-      - name: Build plugin
+          dotnet-version: '6.x.x'
+      - uses: actions/checkout@v3
+      - name: UnitTest-v8
         run: |
-          md unity\general\Bin
-          cd unity\native_src
-          .\make_win64.bat quickjs
-          copy build64_quickjs\Release\puerts.dll ..\general\Bin
-          copy quickjs\Lib\Win64\*.dll ..\general\Bin
-      - name: UnitTest
+          cd unity
+          npm i
+          cd test/dotnet
+          node ../../cli dotnet-test v8_9.4
+      - name: UnitTest-nodejs
         run: |
-          cd unity\general\vs2013
-          nuget restore Puerts.sln
-          nuget install NUnit.Runners -Version 3.2.0 -OutputDirectory testrunner -ExcludeVersion
-          msbuild /property:Configuration=Release Puerts.sln
-          ./testrunner/NUnit.ConsoleRunner/tools/nunit3-console.exe ../Bin/Puerts.UnitTest.dll
+          cd unity/test/dotnet
+          node ../../cli dotnet-test nodejs_16
+      - name: UnitTest-quickjs
+        run: |
+          cd unity/test/dotnet
+          node ../../cli dotnet-test quickjs
           
-  unittest-nodejs:
-    runs-on: windows-2019
+  unittest-osx-dotnet:
+    runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v2
-      - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v1.0.2
-      - name: Get backend artifact
-        uses: ./.github/workflows/composites/unity-download-backend/
+      - uses: actions/setup-dotnet@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          backend: nodejs
-      - name: Build plugin
+          dotnet-version: '6.x.x'
+      - uses: actions/checkout@v3
+      - name: UnitTest-v8
         run: |
-          md unity\general\Bin
-          cd unity\native_src
-          .\make_win64.bat nodejs
-          copy build64_nodejs\Release\puerts.dll ..\general\Bin
-          copy nodejs\Lib\Win64\*.dll ..\general\Bin
-      - name: UnitTest
+          cd unity
+          npm i
+          cd test/dotnet
+          node ../../cli dotnet-test v8_9.4
+      - name: UnitTest-nodejs
         run: |
-          cd unity\general\vs2013
-          nuget restore Puerts.sln
-          nuget install NUnit.Runners -Version 3.2.0 -OutputDirectory testrunner -ExcludeVersion
-          msbuild /property:Configuration=Release Puerts.sln
-          ./testrunner/NUnit.ConsoleRunner/tools/nunit3-console.exe ../Bin/Puerts.UnitTest.dll
-
+          cd unity/test/dotnet
+          node ../../cli dotnet-test nodejs_16
+          
+      - name: UnitTest-quickjs
+        run: |
+          cd unity/test/dotnet
+          node ../../cli dotnet-test quickjs

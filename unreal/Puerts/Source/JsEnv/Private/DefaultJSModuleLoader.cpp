@@ -67,17 +67,15 @@ bool DefaultJSModuleLoader::CheckExists(const FString& PathIn, FString& Path, FS
 bool DefaultJSModuleLoader::SearchModuleInDir(
     const FString& Dir, const FString& RequiredModule, FString& Path, FString& AbsolutePath)
 {
-    if (FPaths::GetExtension(RequiredModule) == TEXT(""))
-    {
-        return SearchModuleWithExtInDir(Dir, RequiredModule + ".js", Path, AbsolutePath) ||
-               SearchModuleWithExtInDir(Dir, RequiredModule + ".mjs", Path, AbsolutePath) ||
-               SearchModuleWithExtInDir(Dir, RequiredModule / "index.js", Path, AbsolutePath) ||
-               SearchModuleWithExtInDir(Dir, RequiredModule / "package.json", Path, AbsolutePath);
-    }
-    else
-    {
-        return SearchModuleWithExtInDir(Dir, RequiredModule, Path, AbsolutePath);
-    }
+    FString Extension = FPaths::GetExtension(RequiredModule);
+    bool IsJs = Extension == TEXT("js") || Extension == TEXT("mjs") || Extension == TEXT("cjs") || Extension == TEXT("json");
+    if (IsJs && SearchModuleWithExtInDir(Dir, RequiredModule, Path, AbsolutePath))
+        return true;
+    return SearchModuleWithExtInDir(Dir, RequiredModule + ".js", Path, AbsolutePath) ||
+           SearchModuleWithExtInDir(Dir, RequiredModule + ".mjs", Path, AbsolutePath) ||
+           SearchModuleWithExtInDir(Dir, RequiredModule + ".cjs", Path, AbsolutePath) ||
+           SearchModuleWithExtInDir(Dir, RequiredModule / "package.json", Path, AbsolutePath) ||
+           SearchModuleWithExtInDir(Dir, RequiredModule / "index.js", Path, AbsolutePath);
 }
 
 bool DefaultJSModuleLoader::SearchModuleWithExtInDir(

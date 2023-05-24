@@ -4,6 +4,9 @@
 #include "JSClassRegister.h"
 #include "Interfaces/IPluginManager.h"
 #include "CoreUObject.h"
+#ifdef PUERTS_WITH_SOURCE_CONTROL
+#include "FileSystemOperation.h"
+#endif
 
 struct FGenImp
 {
@@ -11,23 +14,19 @@ struct FGenImp
 
     FString GetNamePrefix(const puerts::CTypeInfo* TypeInfo)
     {
-        return TypeInfo->IsUEType() ? "UE." : "";
+        return TypeInfo->IsUEType() && !HadNamespace(TypeInfo->Name()) ? "UE." : "";
     }
 
     FString GetName(const puerts::CTypeInfo* TypeInfo)
     {
-        FString Ret = UTF8_TO_TCHAR(TypeInfo->Name());
-        if (TypeInfo->IsUEType())
-        {
-            return Ret.Mid(1);
-        }
-        return Ret;
+        return UTF8_TO_TCHAR(TypeInfo->Name());
     }
 
     void Begin()
     {
         Output << "declare module \"cpp\" {\n";
         Output << "    import * as UE from \"ue\"\n";
+        Output << "    import * as cpp from \"cpp\"\n";
         Output << "    import {$Ref, $Nullable, cstring} from \"puerts\"\n\n";
     }
 
@@ -82,7 +81,7 @@ struct FGenImp
 
     void GenClass(const puerts::JSClassDefinition* ClassDefinition)
     {
-        if (IsUEContainer(ClassDefinition->ScriptName))
+        if (HasUENamespace(ClassDefinition->ScriptName))
             return;
         Output << "    class " << ClassDefinition->ScriptName;
         if (ClassDefinition->SuperTypeId)
@@ -111,7 +110,8 @@ struct FGenImp
         puerts::NamedPropertyInfo* PropertyInfo = ClassDefinition->PropertyInfos;
         while (PropertyInfo && PropertyInfo->Name && PropertyInfo->Type)
         {
-            Output << "        " << PropertyInfo->Name << ": " << PropertyInfo->Type << ";\n";
+            Output << "        " << PropertyInfo->Name << ": " << GetNamePrefix(PropertyInfo->Type) << PropertyInfo->Type->Name()
+                   << ";\n";
             ++PropertyInfo;
         }
 
@@ -120,7 +120,7 @@ struct FGenImp
         {
             int Pos = VariableInfo - ClassDefinition->VariableInfos;
             Output << "        static " << (ClassDefinition->Variables[Pos].Setter ? "" : "readonly ") << VariableInfo->Name << ": "
-                   << VariableInfo->Type << ";\n";
+                   << GetNamePrefix(VariableInfo->Type) << VariableInfo->Type->Name() << ";\n";
             ++VariableInfo;
         }
 
@@ -198,7 +198,11 @@ void UTemplateBindingGenerator::Gen_Implementation() const
 
     Gen.End();
 
-    FFileHelper::SaveStringToFile(Gen.Output.Buffer,
-        *(IPluginManager::Get().FindPlugin("Puerts")->GetBaseDir() / TEXT("Typing/cpp/index.d.ts")),
-        FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+    const FString FilePath = IPluginManager::Get().FindPlugin("Puerts")->GetBaseDir() / TEXT("Typing/cpp/index.d.ts");
+
+#ifdef PUERTS_WITH_SOURCE_CONTROL
+    PuertsSourceControlUtils::MakeSourceControlFileWritable(FilePath);
+#endif
+
+    FFileHelper::SaveStringToFile(Gen.Output.Buffer, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }

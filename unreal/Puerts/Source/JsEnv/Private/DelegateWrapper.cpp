@@ -14,7 +14,6 @@ namespace puerts
 {
 v8::Local<v8::FunctionTemplate> FDelegateWrapper::ToFunctionTemplate(v8::Isolate* Isolate)
 {
-    v8::EscapableHandleScope HandleScope(Isolate);
     auto Result = v8::FunctionTemplate::New(Isolate, New);
     Result->InstanceTemplate()->SetInternalFieldCount(2);
 
@@ -23,7 +22,7 @@ v8::Local<v8::FunctionTemplate> FDelegateWrapper::ToFunctionTemplate(v8::Isolate
     Result->PrototypeTemplate()->Set(FV8Utils::InternalString(Isolate, "Unbind"), v8::FunctionTemplate::New(Isolate, Unbind));
     Result->PrototypeTemplate()->Set(FV8Utils::InternalString(Isolate, "Execute"), v8::FunctionTemplate::New(Isolate, Execute));
 
-    return HandleScope.Escape(Result);
+    return Result;
 }
 
 void FDelegateWrapper::New(const v8::FunctionCallbackInfo<v8::Value>& Info)
@@ -62,6 +61,11 @@ void FDelegateWrapper::Bind(const v8::FunctionCallbackInfo<v8::Value>& Info)
     {
         if (auto Object = FV8Utils::GetUObject(Info[0].As<v8::Object>()))
         {
+            if (FV8Utils::IsReleasedPtr(Object))
+            {
+                FV8Utils::ThrowException(Isolate, "passing a invalid object");
+                return;
+            }
             auto DelegatePtr = FV8Utils::GetPointerFast<FScriptDelegate>(Info.Holder(), 0);
             FScriptDelegate Delegate;
             Delegate.BindUFunction(Object, FName(*FV8Utils::ToFString(Isolate, Info[1])));
@@ -98,7 +102,6 @@ void FDelegateWrapper::Execute(const v8::FunctionCallbackInfo<v8::Value>& Info)
 
 v8::Local<v8::FunctionTemplate> FMulticastDelegateWrapper::ToFunctionTemplate(v8::Isolate* Isolate)
 {
-    v8::EscapableHandleScope HandleScope(Isolate);
     auto Result = v8::FunctionTemplate::New(Isolate, New);
     Result->InstanceTemplate()->SetInternalFieldCount(2);
 
@@ -107,7 +110,7 @@ v8::Local<v8::FunctionTemplate> FMulticastDelegateWrapper::ToFunctionTemplate(v8
     Result->PrototypeTemplate()->Set(FV8Utils::InternalString(Isolate, "Clear"), v8::FunctionTemplate::New(Isolate, Clear));
     Result->PrototypeTemplate()->Set(FV8Utils::InternalString(Isolate, "Broadcast"), v8::FunctionTemplate::New(Isolate, Broadcast));
 
-    return HandleScope.Escape(Result);
+    return Result;
 }
 
 void FMulticastDelegateWrapper::New(const v8::FunctionCallbackInfo<v8::Value>& Info)
@@ -133,6 +136,11 @@ void FMulticastDelegateWrapper::Add(const v8::FunctionCallbackInfo<v8::Value>& I
     {
         if (auto Object = FV8Utils::GetUObject(Info[0].As<v8::Object>()))
         {
+            if (FV8Utils::IsReleasedPtr(Object))
+            {
+                FV8Utils::ThrowException(Isolate, "passing a invalid object");
+                return;
+            }
             auto DelegatePtr = FV8Utils::GetPointerFast<void>(Info.Holder(), 0);
             if (auto Property = CastFieldMacro<MulticastDelegatePropertyMacro>(
                     FV8Utils::IsolateData<IObjectMapper>(Isolate)->FindDelegateProperty(DelegatePtr)))

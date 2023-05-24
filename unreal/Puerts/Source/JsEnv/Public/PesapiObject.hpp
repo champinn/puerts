@@ -24,7 +24,7 @@ class AutoValueScope
 public:
     AutoValueScope(pesapi_env_holder env_holder)
     {
-        scope = pesapi_open_scope(pesapi_get_env_from_holder(env_holder));
+        scope = pesapi_open_scope(env_holder);
     }
 
     ~AutoValueScope()
@@ -65,7 +65,7 @@ public:
         auto object = pesapi_get_value_from_holder(env, value_holder);
 
         auto value = pesapi_get_property(env, object, key);
-        if (pesapi_is_undefined(env, value))
+        if (!pesapi_is_undefined(env, value))
         {
             return puerts::converter::Converter<T>::toCpp(env, value);
         }
@@ -82,7 +82,20 @@ public:
         pesapi_set_property(env, object, key, puerts::converter::Converter<T>::toScript(env, val));
     }
 
-protected:
+    bool IsValid() const
+    {
+        internal::AutoValueScope ValueScope(env_holder);
+        auto env = pesapi_get_env_from_holder(env_holder);
+        auto val = pesapi_get_value_from_holder(env, value_holder);
+        return val && pesapi_is_object(env, val);
+    }
+
+    void operator=(const Object& obj)
+    {
+        env_holder = pesapi_duplicate_env_holder(obj.env_holder);
+        value_holder = pesapi_duplicate_value_holder(obj.value_holder);
+    }
+
     pesapi_env_holder env_holder;
     pesapi_value_holder value_holder;
 
@@ -131,19 +144,26 @@ public:
         }
     }
 
+    bool IsValid() const
+    {
+        internal::AutoValueScope ValueScope(env_holder);
+        auto env = pesapi_get_env_from_holder(env_holder);
+        auto val = pesapi_get_value_from_holder(env, value_holder);
+        return val && pesapi_is_function(env, val);
+    }
+
 private:
     template <typename... Args>
     auto invokeHelper(pesapi_env env, pesapi_value func, Args... CppArgs) const
     {
         pesapi_value argv[sizeof...(Args)]{puerts::converter::Converter<Args>::toScript(env, CppArgs)...};
         return pesapi_call_function(env, func, nullptr, sizeof...(Args), argv);
-        ;
-    };
+    }
 
     auto invokeHelper(pesapi_env env, pesapi_value func) const
     {
         return pesapi_call_function(env, func, nullptr, 0, nullptr);
-    };
+    }
 
     friend struct puerts::converter::Converter<Function>;
 };
@@ -151,13 +171,19 @@ private:
 template <>
 struct ScriptTypeName<Object>
 {
-    static constexpr const char* value = "object";
+    static constexpr auto value()
+    {
+        return Literal("object");
+    }
 };
 
 template <>
 struct ScriptTypeName<::puerts::Function>
 {
-    static constexpr const char* value = "Function";
+    static constexpr auto value()
+    {
+        return Literal("Function");
+    }
 };
 
 namespace converter
@@ -168,7 +194,6 @@ struct Converter<::puerts::Object>
     static pesapi_value toScript(pesapi_env env, ::puerts::Object value)
     {
         return pesapi_get_value_from_holder(env, value.value_holder);
-        ;
     }
 
     static ::puerts::Object toCpp(pesapi_env env, pesapi_value value)
@@ -188,7 +213,6 @@ struct Converter<::puerts::Function>
     static pesapi_value toScript(pesapi_env env, ::puerts::Function value)
     {
         return pesapi_get_value_from_holder(env, value.value_holder);
-        ;
     }
 
     static ::puerts::Function toCpp(pesapi_env env, pesapi_value value)

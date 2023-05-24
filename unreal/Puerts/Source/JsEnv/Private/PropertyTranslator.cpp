@@ -470,7 +470,7 @@ public:
     {
         UObject* UEObject = ObjectBaseProperty->GetObjectPropertyValue(ValuePtr);
 
-        if (!UEObject || !UEObject->IsValidLowLevelFast() || UEObject->IsPendingKill())
+        if (!UEObject || !UEObject->IsValidLowLevelFast() || UEObjectIsPendingKill(UEObject))
         {
             return v8::Undefined(Isolate);
         }
@@ -572,7 +572,7 @@ public:
         const FScriptInterface& Interface = InterfaceProperty->GetPropertyValue(ValuePtr);
 
         UObject* Object = Interface.GetObject();
-        if (!Object || !Object->IsValidLowLevelFast() || Object->IsPendingKill())
+        if (!Object || !Object->IsValidLowLevelFast() || UEObjectIsPendingKill(Object))
         {
             return v8::Undefined(Isolate);
         }
@@ -595,15 +595,33 @@ public:
     }
 };
 
-class FScriptStructPropertyTranslator : public FPropertyWithDestructorReflection
+class FFastPropertyTranslator : public FPropertyWithDestructorReflection
 {
 public:
-    explicit FScriptStructPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
+    explicit FFastPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
     {
-        if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
+    }
+
+    virtual bool JsToUEFast(v8::Isolate* Isolate, v8::Local<v8::Context>& Context, const v8::Local<v8::Value>& Value,
+        void* TempBuff, void** OutValuePtr) const override
+    {
+        void* Ptr = FV8Utils::GetPointer(Context, Value);
+
+        if (Ptr)
         {
-            ParamShallowCopySize = StructProperty->Struct->GetStructureSize();
+            *OutValuePtr = Ptr;
+            return true;
         }
+        *OutValuePtr = TempBuff;
+        return JsToUE(Isolate, Context, Value, TempBuff, false);
+    }
+};
+
+class FScriptStructPropertyTranslator : public FFastPropertyTranslator
+{
+public:
+    explicit FScriptStructPropertyTranslator(PropertyMacro* InProperty) : FFastPropertyTranslator(InProperty)
+    {
     }
 
     v8::Local<v8::Value> UEToJs(
@@ -616,7 +634,6 @@ public:
         {
             // FScriptStructWrapper::Alloc using new, so delete in static wrapper is safe
             Ptr = FScriptStructWrapper::Alloc(StructProperty->Struct);
-            StructProperty->InitializeValue(Ptr);
             StructProperty->CopySingleValue(Ptr, ValuePtr);
         }
         return FV8Utils::IsolateData<IObjectMapper>(Isolate)->FindOrAddStruct(
@@ -771,10 +788,10 @@ public:
 
 // containers
 
-class FScriptArrayPropertyTranslator : public FPropertyWithDestructorReflection
+class FScriptArrayPropertyTranslator : public FFastPropertyTranslator
 {
 public:
-    explicit FScriptArrayPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
+    explicit FScriptArrayPropertyTranslator(PropertyMacro* InProperty) : FFastPropertyTranslator(InProperty)
     {
         if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
         {
@@ -821,10 +838,10 @@ public:
 private:
 };
 
-class FScriptSetPropertyTranslator : public FPropertyWithDestructorReflection
+class FScriptSetPropertyTranslator : public FFastPropertyTranslator
 {
 public:
-    explicit FScriptSetPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
+    explicit FScriptSetPropertyTranslator(PropertyMacro* InProperty) : FFastPropertyTranslator(InProperty)
     {
         if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
         {
@@ -870,10 +887,10 @@ public:
 private:
 };
 
-class FScriptMapPropertyTranslator : public FPropertyWithDestructorReflection
+class FScriptMapPropertyTranslator : public FFastPropertyTranslator
 {
 public:
-    explicit FScriptMapPropertyTranslator(PropertyMacro* InProperty) : FPropertyWithDestructorReflection(InProperty)
+    explicit FScriptMapPropertyTranslator(PropertyMacro* InProperty) : FFastPropertyTranslator(InProperty)
     {
         if (Property->HasAnyPropertyFlags(CPF_OutParm) && !Property->HasAnyPropertyFlags(CPF_ConstParm))
         {
@@ -987,7 +1004,7 @@ public:
         if (DelegatePtr)
         {
             UObject* UEObject = DelegatePtr->GetUObject();
-            if (UEObject && UEObject->IsValidLowLevelFast() && !UEObject->IsPendingKill())
+            if (UEObject && UEObject->IsValidLowLevelFast() && !UEObjectIsPendingKill(UEObject))
             {
                 return FV8Utils::IsolateData<IObjectMapper>(Isolate)->FindOrAddDelegate(
                     Isolate, Context, UEObject, DelegateProperty, DelegatePtr, PassByPointer);
@@ -1018,6 +1035,12 @@ public:
                 auto Obj = FV8Utils::GetUObject(Context, Array->Get(Context, 0).ToLocalChecked());
                 if (Obj)
                 {
+                    if (FV8Utils::IsReleasedPtr(Obj))
+                    {
+                        FV8Utils::ThrowException(Isolate, "passing a invalid object");
+                        return false;
+                    }
+
                     auto FuncName = Array->Get(Context, 1).ToLocalChecked();
                     if (FuncName->IsString())
                     {
@@ -1067,6 +1090,19 @@ public:
         return true;
     }
 
+    virtual bool JsToUEFast(v8::Isolate* Isolate, v8::Local<v8::Context>& Context, const v8::Local<v8::Value>& Value,
+        void* TempBuff, void** OutValuePtr) const override
+    {
+        if (Value->IsObject())
+        {
+            auto Outer = Value->ToObject(Context).ToLocalChecked();
+            auto Realvalue = Outer->Get(Context, 0).ToLocalChecked();
+            return Inner->JsToUEFast(Isolate, Context, Realvalue, TempBuff, OutValuePtr);
+        }
+        *OutValuePtr = TempBuff;
+        return true;
+    }
+
     void UEOutToJs(v8::Isolate* Isolate, v8::Local<v8::Context>& Context, const v8::Local<v8::Value>& Value, const void* ValuePtr,
         bool PassByPointer) const override
     {
@@ -1077,7 +1113,7 @@ public:
             {
                 auto Realvalue = Outer->Get(Context, 0).ToLocalChecked();
                 auto Ptr = FV8Utils::GetPointer(Context, Realvalue);
-                if (Ptr)
+                if (Ptr && Ptr != ValuePtr)
                 {
                     FMemory::Memcpy(Ptr, ValuePtr, ParamShallowCopySize);
                     return;
@@ -1085,6 +1121,10 @@ public:
             }
 
             auto ReturnVal = Outer->Set(Context, 0, Inner->UEToJs(Isolate, Context, ValuePtr, PassByPointer));
+            if (Inner->ParamShallowCopySize)    // $ref(undefined) for shallow copy type
+            {
+                Property->DestroyValue(const_cast<void*>(ValuePtr));
+            }
         }
     }
 

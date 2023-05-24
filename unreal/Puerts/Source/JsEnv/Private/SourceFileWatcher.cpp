@@ -5,7 +5,7 @@
  * be subject to their corresponding license terms. This file is subject to the terms and conditions defined in file 'LICENSE',
  * which is part of this source code package.
  */
-
+#if WITH_EDITOR
 #include "SourceFileWatcher.h"
 #include "DirectoryWatcherModule.h"
 #include "Modules/ModuleManager.h"
@@ -21,7 +21,7 @@ FSourceFileWatcher::FSourceFileWatcher(std::function<void(const FString&)> InOnW
 void FSourceFileWatcher::OnSourceLoaded(const FString& InPath)
 {
     FString Dir = FPaths::GetPath(InPath);
-    FString FileName = FPaths::GetPathLeaf(InPath);
+    FString FileName = FPaths::GetCleanFilename(InPath);
 
     FScopeLock ScopeLock(&SourceFileWatcherCritical);
     if (!WatchedDirs.Contains(Dir))
@@ -60,7 +60,7 @@ void FSourceFileWatcher::OnDirectoryChanged(const TArray<FFileChangeData>& FileC
             FPaths::NormalizeFilename(Change.Filename);
             Change.Filename = FPaths::ConvertRelativePathToFull(Change.Filename);
             FString Dir = FPaths::GetPath(Change.Filename);
-            FString FileName = FPaths::GetPathLeaf(Change.Filename);
+            FString FileName = FPaths::GetCleanFilename(Change.Filename);
             FString Splitter = TEXT("/");
             if (!WatchedFiles.Contains(Dir))
             {
@@ -101,3 +101,4 @@ FSourceFileWatcher::~FSourceFileWatcher()
     }
 }
 }    // namespace puerts
+#endif
